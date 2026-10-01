@@ -20,7 +20,7 @@ export default async function DashboardPage() {
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-neutral-500">
             {new Date().toLocaleDateString("en-US", {
               weekday: "long",

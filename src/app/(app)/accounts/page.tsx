@@ -36,7 +36,7 @@ export default async function AccountsPage() {
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Accounts</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
           <p className="text-sm text-neutral-500">
             {accounts.length} account{accounts.length === 1 ? "" : "s"} · net
             worth {formatCurrency(netWorth.netWorth)}

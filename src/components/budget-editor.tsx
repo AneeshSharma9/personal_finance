@@ -153,6 +153,20 @@ export function BudgetEditor({
 
       <ApplyRulesBar unassigned={unassigned} pending={pending} onApply={applyRules} />
 
+      {/*
+        Earnings leads: you plan the budget from what comes in, then decide
+        where it goes.
+      */}
+      <EarningsTable
+        rows={earnings}
+        options={earningOptions}
+        pending={pending}
+        year={year}
+        month={month}
+        onSave={saveBudget}
+        onDelete={deleteBudget}
+      />
+
       <BudgetTable
         title="Budget Basics"
         subtitle="Automatic bills, utilities, savings goals and debt payments."
@@ -172,16 +186,6 @@ export function BudgetEditor({
         rows={categories}
         kind="category"
         options={spendingOptions}
-        pending={pending}
-        year={year}
-        month={month}
-        onSave={saveBudget}
-        onDelete={deleteBudget}
-      />
-
-      <EarningsTable
-        rows={earnings}
-        options={earningOptions}
         pending={pending}
         year={year}
         month={month}

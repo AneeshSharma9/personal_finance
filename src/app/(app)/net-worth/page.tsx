@@ -30,7 +30,7 @@ export default async function NetWorthPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">Net worth</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Net worth</h1>
         <p className="text-sm text-neutral-500">
           {formatCurrency(netWorth.netWorth)}
         </p>

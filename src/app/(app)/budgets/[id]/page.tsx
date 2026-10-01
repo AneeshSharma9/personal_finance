@@ -86,7 +86,7 @@ export default async function BucketPage({
         >
           &larr; Budgets
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold">{budget.name}</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{budget.name}</h1>
         <p className="text-sm text-neutral-500">
           {monthLabel} &middot; {formatCurrency(Number(budget.monthlyLimit))}{" "}
           budgeted &middot;{" "}
@@ -151,7 +151,7 @@ function MonthNav({
 function Invalid() {
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="text-2xl font-semibold">Bucket not found</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Bucket not found</h1>
       <Link href="/budgets" className="text-sm underline">
         Back to budgets
       </Link>

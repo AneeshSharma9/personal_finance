@@ -46,7 +46,7 @@ export default async function TransactionsPage({
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <header>
-        <h1 className="text-2xl font-semibold">Transactions</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
         <p className="text-sm text-neutral-500">
           {total.toLocaleString("en-US")} transaction
           {total === 1 ? "" : "s"}

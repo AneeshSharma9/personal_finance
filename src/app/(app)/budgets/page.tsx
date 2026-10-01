@@ -110,7 +110,7 @@ export default async function BudgetsPage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">Budgets</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Budgets</h1>
         <p className="text-sm text-neutral-500">
           {new Date(Date.UTC(year, month, 1)).toLocaleDateString("en-US", {
             month: "long",

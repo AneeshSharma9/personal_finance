@@ -111,7 +111,7 @@ export function MonthStrip({
                         ? ` · income ${Math.round(point.income)}`
                         : ""
                     }`}
-                    className={`flex w-[4.5rem] flex-col items-center gap-1 rounded-xl border-2 px-2 py-2.5 transition ${
+                    className={`flex w-[4.5rem] flex-col items-center gap-1 rounded-lg border-2 px-2 py-2.5 transition ${
                       isSelected
                         ? "border-neutral-900 bg-neutral-50 dark:border-white dark:bg-neutral-800"
                         : "border-neutral-200 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
