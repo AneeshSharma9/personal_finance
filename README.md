@@ -23,9 +23,21 @@ The design and constraints this implements live in
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Project Settings → **API** → copy `Project URL` and `anon public` key.
-3. Project Settings → **Database** → copy the **URI / Session pooler**
-   connection string. Use port **5432**, not the Transaction pooler (6543) —
-   Drizzle needs prepared statements.
+3. Project Settings → **Database** → **Connection string**. Pick **Session
+   pooler** (or the "URI" option, which is the same thing):
+
+   ```
+   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+   ```
+
+   Use port **5432**, not the Transaction pooler (6543) — Drizzle needs
+   prepared statements.
+
+   **Do not use the "Direct connection" option.** Its host is
+   `db.<ref>.supabase.co`, which is **IPv6-only**. It often works from a laptop
+   and then fails from Vercel with a 500 on every page that queries the
+   database. If you already have a direct-connection URL, replace the host with
+   the pooler host above and keep the password URL-encoded.
 4. Authentication → Users → **Add user** with your email and a password. The app
    has no signup UI on purpose: only addresses in `ALLOWED_EMAILS` can use it.
 5. Authentication → Sign In / Providers → email → disable "Allow new users to
@@ -118,6 +130,28 @@ The daily snapshot cron is already configured in `vercel.json`
 (`17 7 * * *`). Vercel sends `Authorization: Bearer $CRON_SECRET` automatically
 when that variable is set.
 
+### Diagnosing a bad deploy
+
+`GET /api/health` checks that the database is reachable and that the required
+secrets are present, returning 503 with a per-check breakdown. It is gated by
+`CRON_SECRET` so it can't be used to probe infrastructure.
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://<domain>/api/health
+```
+
+```json
+{"ok":true,"checks":{
+  "database":{"ok":true,"detail":"1 users"},
+  "encryptionKey":{"ok":true},
+  "plaid":{"ok":true,"detail":"sandbox"},
+  "allowedEmails":{"ok":true}}}
+```
+
+The usual cause of "every page 500s" is `database.ok: false`. A detail of
+`getaddrinfo ENOTFOUND` or a timeout means the host is unreachable from
+Vercel — see the IPv6 warning under Setup above.
+
 ## Commands
 
 | Command | Purpose |
@@ -130,6 +164,7 @@ when that variable is set.
 | `npm run db:generate` | Write a migration from schema changes |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:studio` | Browse synced data in Drizzle Studio |
+| `GET /api/health` | Deployment health check (needs `CRON_SECRET`) |
 
 ## Plaid constraints this app is built around
 
