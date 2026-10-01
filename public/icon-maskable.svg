@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Maskable: art is inset to 80% safe zone so Android's circle crop
+       never clips the line. Background is full-bleed. -->
+  <rect width="512" height="512" fill="#0a0a0a"/>
+  <path d="M154 316 L214 256 L268 297 L358 187"
+        fill="none" stroke="#ffffff" stroke-width="28"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="214" cy="256" r="15" fill="#ffffff"/>
+  <circle cx="268" cy="297" r="15" fill="#ffffff"/>
+</svg>
