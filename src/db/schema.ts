@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -98,6 +99,23 @@ export const loanKind = pgEnum("loan_kind", [
   "mortgage",
   "medical",
   "other",
+]);
+
+/**
+ * Where a loan payment came from.
+ *
+ * Recorded because undoing a rule needs to tell the two apart. When a rule step
+ * says "this pays the car loan" is removed, only payments the *rule* created
+ * should be un-tagged; one the user attached by hand on the transactions page is
+ * their decision and has to survive. Without this the two are indistinguishable
+ * and the safe-looking undo quietly deletes a deliberate tag along with the
+ * interest split it recorded.
+ */
+export const loanPaymentSource = pgEnum("loan_payment_source", [
+  /** Tagged by the user on the transactions page. */
+  "manual",
+  /** Created by a rule step matching the transaction. */
+  "rule",
 ]);
 
 export const recurringFrequency = pgEnum("recurring_frequency", [
@@ -395,6 +413,16 @@ export const budgetRuleMatchType = pgEnum("budget_rule_match_type", [
  * A budget row's `category` is already an implicit category rule, so these rows
  * exist for the cases that category alone can't express: "everything from
  * Starbucks is Dining", "Shell is Transportation".
+ *
+ * ONE ROW IS ONE STEP, NOT ONE RULE. A rule is every row sharing a
+ * `(match_type, match_value)`, which is how "amount 453.91 pays the car loan AND
+ * lands in Car Payment" is stored: two rows, one match, two independent targets.
+ * Each row still satisfies the one-target CHECK, so the targets stay unambiguous
+ * per step while the rule as a whole can have several.
+ *
+ * The consequence worth knowing: the rule's identity is its match, not its id.
+ * Saving a rule replaces every step under that match, and the id a client sends
+ * back is only used to find the match.
  */
 export const budgetRules = pgTable(
   "budget_rules",
@@ -404,25 +432,25 @@ export const budgetRules = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     /**
-     * Bucket this rule routes into.
+     * Bucket this step routes into.
      *
-     * Nullable so a rule can point at a loan instead - see `loan_id`. Exactly one
-     * of the two is set, enforced by a CHECK constraint in the migration, because
-     * "goes to a bucket" and "pays off a loan" are different intents and a row
-     * claiming both would be ambiguous.
+     * Nullable so a step can point at a loan instead - see `loan_id`. Exactly one
+     * of the two is set per row, enforced by a CHECK constraint in the
+     * migration, because "goes to a bucket" and "pays off a loan" are different
+     * intents and a row claiming both would be ambiguous.
      */
     budgetId: integer("budget_id").references(() => budgets.id, {
       onDelete: "cascade",
     }),
     /**
-     * Loan this rule pays down. Tagged transactions become loan payments, which
+     * Loan this step pays down. Tagged transactions become loan payments, which
      * is what moves the loan's balance.
      */
     loanId: integer("loan_id").references(() => loans.id, {
       onDelete: "cascade",
     }),
     /**
-     * Rule says "ignore these" rather than "route these somewhere".
+     * Step says "ignore these" rather than "route these somewhere".
      *
      * A third target alongside bucket and loan, because excluding is a real
      * outcome rather than a bucket of its own. Enforced by the one-target CHECK
@@ -430,11 +458,6 @@ export const budgetRules = pgTable(
      */
     exclude: boolean("exclude").notNull().default(false),
     matchType: budgetRuleMatchType("match_type").notNull(),
-    /**
-     * For `merchant`: a case-insensitive substring of the merchant or raw
-     * description. For `category`: a Plaid category value, matched with prefix
-     * semantics so `FOOD_AND_DRINK` absorbs its detailed children.
-     */
     /**
      * For `merchant`: a case-insensitive substring. For `category`: a Plaid
      * category, matched with prefix semantics. For `amount`: the figure as a
@@ -444,6 +467,16 @@ export const budgetRules = pgTable(
     matchValue: text("match_value").notNull(),
     /** Lower runs first. Ties are broken by id so evaluation is deterministic. */
     priority: integer("priority").notNull().default(0),
+    /**
+     * Position of this step among its siblings, 0-based.
+     *
+     * The steps of one rule are independent - a loan payment and a bucket
+     * assignment do not contend - so this decides nothing except the order they
+     * are listed and applied in. It is stored rather than derived from `id`
+     * because the user reorders them deliberately, and an id order would quietly
+     * undo that on the next refresh.
+     */
+    stepOrder: integer("step_order").notNull().default(0),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -453,9 +486,27 @@ export const budgetRules = pgTable(
       .defaultNow(),
   },
   (t) => [
-    // One rule per (type, value): re-saving a rule updates it instead of
-    // silently stacking duplicates.
-    uniqueIndex("budget_rules_user_type_value_key").on(
+    /*
+     * One step per (match, target), rather than one rule per match.
+     *
+     * This was `UNIQUE (user_id, match_type, match_value)`, which is exactly what
+     * made a second step impossible: re-saving the same match with a different
+     * target hit the conflict clause and *replaced* the first step instead of
+     * adding to it.
+     *
+     * The two id columns are wrapped in coalesce because btree treats NULLs as
+     * distinct, so a plain composite index would happily accept the same ignore
+     * step twice. -1 is not a valid id (they are identity columns from 1).
+     */
+    uniqueIndex("budget_rules_user_match_target_key").on(
+      t.userId,
+      t.matchType,
+      t.matchValue,
+      sql`coalesce(${t.budgetId}, -1)`,
+      sql`coalesce(${t.loanId}, -1)`,
+      t.exclude,
+    ),
+    index("budget_rules_user_match_idx").on(
       t.userId,
       t.matchType,
       t.matchValue,
@@ -760,6 +811,15 @@ export const loanPayments = pgTable(
     /** Transaction date, not insertion date, so history reads chronologically. */
     paidOn: date("paid_on").notNull(),
     /**
+     * Whether this payment was tagged by the user or minted by a rule, so
+     * removing a rule step can undo only its own writes.
+     *
+     * No default on purpose. Every insert has to say which it is; a default
+     * that guesses wrong makes an undo skip the rows it was supposed to remove,
+     * which is indistinguishable from the undo not working at all.
+     */
+    source: loanPaymentSource("source").notNull(),
+    /**
      * Start of the interest period this payment closed: the loan's
      * `last_accrued_at` before the payment (or `opened_on` if it had never
      * accrued).
@@ -878,6 +938,7 @@ export type BudgetKind = (typeof budgetKind.enumValues)[number];
 export type BudgetRuleMatchType = (typeof budgetRuleMatchType.enumValues)[number];
 export type LiabilityKind = (typeof liabilityKind.enumValues)[number];
 export type LoanKind = (typeof loanKind.enumValues)[number];
+export type LoanPaymentSource = (typeof loanPaymentSource.enumValues)[number];
 
 export type User = typeof users.$inferSelect;
 export type Item = typeof items.$inferSelect;

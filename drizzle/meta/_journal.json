@@ -50,6 +50,34 @@
       "when": 1790917404797,
       "tag": "0006_powerful_dakota_north",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790944088253,
+      "tag": "0007_bitter_sunspot",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790944273106,
+      "tag": "0008_normal_doctor_doom",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790944433160,
+      "tag": "0009_fearless_raider",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790946014281,
+      "tag": "0010_silent_veda",
+      "breakpoints": true
     }
   ]
 }

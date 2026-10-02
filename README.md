@@ -236,10 +236,38 @@ spend on. Category values are **not** validated against a frozen list, because
 Plaid moved to a PFC **v2** taxonomy for Items created after 2025-12-03 and a
 hardcoded enum would go stale.
 
+There used to be a seeded list of suggested buckets merged into those options.
+It was removed: it offered category values nobody had transacted in —
+`LOAN_PAYMENTS`, `BANK_FEES`, `SAVINGS` — and every bucket created from one was a
+bucket with no real boundary. That is how "Loan Payments Car Payment" and
+"Savings & Debt" came to exist and compete for the same transactions. A
+transaction's own Plaid category is the honest unit of a bucket.
+
 A row stores two deliberately separate things:
 
 - `name` — the display label, free-form and yours ("Bills & Utilities").
 - `category` — the Plaid category its Actual is measured against.
+
+### Naming a bucket yourself
+
+**Add bucket** opens a form, not a list to pick from. The name is yours; the
+category is optional.
+
+Pick a category chip to fill both in at once, then edit the name, or skip the chips
+entirely and type a name with **Nothing - display only** selected. That creates a
+row that claims no transactions — the right shape for a bucket like "Vacation
+fund" that you are planning for rather than tracking. A display-only bucket's
+Actual stays 0 until you route something into it, which you can do with a rule
+step on `/rules` (see [Rules](#a-rule-is-a-match-plus-steps)).
+
+Bucket names are unique **per group**, so "Bills & Utilities" can exist under both
+Budget Basics and Budget Categories.
+
+A row's group is fixed at creation: `PUT /api/budgets` uses `kind` as part of its
+upsert key and never rewrites it, so moving a bucket between Budget Basics and
+Budget Categories means deleting and recreating it (which cascades away any rule
+pointing at it). Worth knowing, because the group is not purely cosmetic — see
+[Which rule wins](#which-rule-wins).
 
 ### Summary and month navigation
 
@@ -285,23 +313,55 @@ The engine only ever fills in **null** assignments, so:
 
 - Re-running it never overwrites a manual assignment.
 - Changing a rule affects future transactions and anything still unassigned.
-- **Re-assign everything** clears assignments first, when you want existing
-  routing decisions re-made.
+- There is no way to clear every assignment and start over. There used to be —
+  a **Re-assign everything** button, and `{"reset":true}` on the endpoint below.
+  It cleared manual assignments too, since they were never tracked separately,
+  so it was a one-click way to lose every routing decision made by hand. To move
+  a transaction that is already in a bucket, assign it from the queue below or
+  from the bucket's own page.
 
-It runs after every transaction sync, on the `SYNC_UPDATES_AVAILABLE` webhook,
-and on demand:
+It runs after every transaction sync, on the `SYNC_UPDATES_AVAILABLE` webhook, and
+on demand:
 
 ```bash
-curl -X POST localhost:3000/api/budgets/apply -d '{}' -H 'Content-Type: application/json'
-curl -X POST localhost:3000/api/budgets/apply -d '{"reset":true}' -H 'Content-Type: application/json'
+curl -X POST localhost:3000/api/budgets/apply -H 'Content-Type: application/json'
 
-# A merchant rule routing every Starbucks charge into a bucket
-curl -X PUT localhost:3000/api/budgets/rules -H 'Content-Type: application/json' \
-  -d '{"matchType":"merchant","matchValue":"Starbucks","budgetId":3}'
+# A merchant rule routing every Starbucks charge into bucket 3.
+# A rule is a match plus steps; see Rules below.
+curl -X PUT localhost:3000/api/rules -H 'Content-Type: application/json' \
+  -d '{"matchType":"merchant","matchValue":"Starbucks",
+       "steps":[{"target":"bucket","budgetId":3}]}'
 ```
 
 `PUT /api/budgets` upserts on `(kind, name)`, so saving the same name again
 updates the row — that is what lets the UI save on blur.
+
+### The unassigned queue
+
+The count on the budgets page links to `/budgets/unassigned?year=&month=`: the
+month's spending with no bucket, one row per transaction, each routed by hand.
+
+**Assign unassigned** and this page do different jobs. The button runs the rules
+over everything still null, which is right for the transactions the engine *can*
+place and useless for the ones it cannot — a landlord payment with no recognisable
+merchant, a split transaction, anything where Plaid's category is simply wrong.
+Those need a person, one row at a time.
+
+Rows leave the list as they are assigned, which is the confirmation. **Ignore**
+takes a row out of the queue without bucketing it: `excluded` keeps it visible
+and greyed rather than deleting it, so the decision stays reversible. Without it
+the queue cannot be emptied honestly — some spending belongs in no bucket at all.
+
+Both write `budgetId` / `excluded` through `PATCH /api/transactions/[id]`, the
+same route the bucket detail page uses. Since the engine only fills nulls, a
+choice made here is durable and a later sync will not undo it.
+
+The queue's filter is deliberately identical to the count's
+(`getUnassignedTransactions` vs `getSpendSummary`): month-scoped, `pending =
+false`, `budget_id is null`, `amount > 0`. A link that says "14 unassigned" and
+lists 40 would be worse than no link. `amount > 0` is doing real work — money in
+is routed to an earnings bucket automatically, and money moving a credit or loan
+balance is excluded as neither, and both are negative.
 
 ### Changing a transaction's category
 
@@ -339,7 +399,42 @@ live under Budgets, which was wrong as soon as a rule could pay down a loan: tha
 is a different kind of write (it mints a payment record and moves a debt balance)
 from sorting spending into a bucket.
 
-`GET|PUT /api/rules`, `DELETE /api/rules?id=`.
+`GET|PUT /api/rules`, `POST /api/rules`, `DELETE /api/rules?id=`.
+
+### A rule is a match plus steps
+
+A rule is **one match and any number of steps**. Each step sends matching
+transactions somewhere different, and they do not compete:
+
+```
+Match: amount 453.91
+  1. send to  → Mazda 3 Loan        (records a payment, moves the balance)
+  2. send to  → Car Payment bucket  (sets budget_id)
+```
+
+Both run. The loan write and the bucket write touch different columns, so the
+same transaction ends up recorded as a car-loan payment *and* counted as car
+spending — which is the point of expressing them as one rule.
+
+**One row in `budget_rules` is one step.** Every row sharing a
+`(match_type, match_value)` belongs to the same rule, so a rule's identity is its
+match, not a row id. `PUT` replaces the whole set: steps still listed are updated
+in place, steps no longer listed are deleted, only genuinely new steps are
+inserted.
+
+This replaced a one-target design where the table was unique on
+`(user_id, match_type, match_value)` and saving was an upsert on that key. Adding
+a second target therefore **replaced** the first instead of joining it, so a
+"pay the car loan" rule silently became a "spend on car payments" rule. Each
+*step* still satisfies `budget_rules_one_target_check` — exactly one of
+`budget_id`, `loan_id`, `exclude` — so no individual row is ambiguous; only the
+rule as a whole has several targets.
+
+### Editing
+
+Each rule has an **edit** button that loads its steps back into the same form,
+so steps can be added, removed, reordered, or retargeted. Removing a step is not
+just "stop doing this going forward" — see [Undo](#undoing-a-step).
 
 ### Match types
 
@@ -349,16 +444,32 @@ from sorting spending into a bucket.
 | `category` | A Plaid category, or any child of it | Boundary-aware: `FOOD` does not claim `FASTFOOD_RESTAURANT` |
 | `amount` | That exact figure | Magnitude, so direction-agnostic; `600` and `600.00` are one rule |
 
-A rule targets **either** a bucket **or** a loan, enforced by a CHECK constraint
-(`budget_rules_one_target_check`) so a half-filled form cannot create an
-ambiguous row.
-
 ### Precedence
+
+Between rules, for which bucket wins:
 
 1. Exact amount.
 2. Merchant contains.
 3. Category - but your own category override wins over Plaid's suggestion.
 4. The catch-all bucket.
+
+Within one rule there is no precedence: every step runs.
+
+#### Budget groups are not cosmetic
+
+The `Which rule wins` list on `/budgets` is about *rules*. Between *buckets*,
+there is a precedence people do not expect: `loadRuleSet` orders buckets by
+`budget_kind` first, and Postgres orders an enum by its declaration order —
+`basic`, `category`, `earning`. So **every Budget Basics bucket is tested before
+every Budget Categories bucket**, and because matching is prefix-based on the
+underscore boundary, a Basics bucket on `LOAN_PAYMENTS` claims
+`LOAN_PAYMENTS_CAR_PAYMENT` before a Categories bucket on `LOAN_PAYMENTS` ever
+sees it.
+
+That is why having both "Loan Payments Car Payment" (Basics) and "Savings &
+Debt" (Categories) was quietly redundant rather than additive. It is not written
+down anywhere in the UI, and it is a side effect of reusing the display group as
+the sort key.
 
 ### Saving a rule applies it to history
 
@@ -367,23 +478,50 @@ assignment, which is what makes a manual assignment survive later syncs. That is
 also why a new rule used to look broken: every transaction it matched had already
 been assigned.
 
-Saving a rule therefore applies it to every matching transaction, overwriting
-existing assignments, and the response reports `moved` and `matched` so the page
-can say what happened. A rule that silently matched nothing would be
-indistinguishable from a working one.
+Saving a rule therefore applies every step to every matching transaction,
+overwriting existing assignments, and the response reports `applied` — one
+`{moved, matched, target}` per step, so the page can say what each one did. A
+rule that silently matched nothing would be indistinguishable from a working one.
 
 The one thing it does **not** do is create a rule from a per-transaction
 reassignment; those remain one-off.
 
-### Loan rules
+### Loan steps
 
-A rule aimed at a loan tags matching outgoing transactions as payments, creating
+A step aimed at a loan tags matching outgoing transactions as payments, creating
 `loan_payments` rows. Backfill runs in **ascending date order** on purpose: each
 insert advances the loan's accrual cursor, so applying newest-first would charge
 a year of interest against the first payment and none against the rest.
 
 Runs after a sync (`applyLoanRules`), non-fatally and separately from bucket
 routing, and skips transactions that already have a payment.
+
+### Undoing a step
+
+Removing a step undoes what it did, because a step that wrote loan payments has
+already moved a debt balance — leaving those behind would leave the rule's
+history asserting something untrue. Deleting a rule undoes all of its steps.
+
+The writes are not always the step's alone, so each one is checked against
+everything that still wants it and left alone if so (`kept` in the response):
+
+| Step | Undo | Left alone when |
+|---|---|---|
+| bucket | clears `budget_id` | another step or rule still targets that bucket |
+| ignore | clears `excluded` | the row is a credit/loan balance movement, which the routing engine excludes for its own reasons |
+| loan | deletes the `loan_payments` row | the payment has `source = 'manual'`, or another rule still targets that loan |
+
+Clearing `budget_id` leaves the transaction **undecided** rather than repointed.
+`applyBudgetRules` only fills nulls, so the next routing pass decides from
+whatever else matches; if nothing does, the row visibly falls to the catch-all
+instead of quietly staying where it was.
+
+`loan_payments.source` is what keeps an undo from deleting a tag the user set by
+hand on the transactions page. Without it the two are indistinguishable rows. It
+has **no database default**, so an insert has to say which it is — the column
+used to default to `'manual'`, which meant every row written before it existed was
+labelled as a hand-tag and no undo ever removed any of them. See
+`drizzle/0010_silent_veda.sql`, which relabels those rows and drops the default.
 
 ## Manual loans
 
@@ -430,6 +568,9 @@ Consequences worth knowing:
 - Only outgoing transactions can be tagged. Plaid signs are positive for money
   out, and a loan payment is money out.
 - Deleting a loan deletes its payment history with it.
+- `source` records whether the payment was tagged by hand or by a rule, so
+  removing a rule step undoes only its own writes. See [Rules → Undoing a
+  step](#undoing-a-step).
 
 The interest split on each payment is **stored, not recomputed**, so history stays
 truthful after you correct the balance by hand.
@@ -509,13 +650,19 @@ Link one real account first, confirm the sync, *then* continue.
   payment below its monthly interest correctly reports no payoff rather than a
   fictional one.
 - **Notes UI.** `PATCH /api/transactions/[id]` accepts `notes`; nothing calls it.
-- **Per-transaction overrides.** A rule that now matches a transaction you have
-  already re-assigned by hand will overwrite that choice, because saving a rule
-  deliberately applies it to history. There is no per-transaction "leave this
-  alone" flag.
+- **Per-transaction overrides.** A rule step that now matches a transaction you
+  have already re-assigned by hand will overwrite that choice, because saving a
+  rule deliberately applies it to history. There is no per-transaction "leave this
+  alone" flag. (A hand-tagged *loan* payment is the exception: it carries
+  `loan_payments.source = 'manual'` and survives an undo.)
 - **Budget basics detection.** Budget Basics is currently just a grouping you
   assign rows to; nothing identifies your recurring bills and pre-seeds them
   there. That needs a recurring-charge detector.
+- **Moving a bucket between groups.** A row's `budget_kind` is fixed at creation,
+  because `PUT /api/budgets` uses it as the upsert key and never rewrites it. A
+  "Move to Budget Basics" control would need `budgetKind` in the conflict `set`,
+  and would want a decision about whether it should change routing precedence
+  (see [Budget groups are not cosmetic](#budget-groups-are-not-cosmetic)).
 - **Real PWA testing on iPhone**, including the open question of whether OAuth
   Link works inside a home-screen web app (architecture doc section 12).
 

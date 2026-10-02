@@ -1,10 +1,10 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
-import { isCatchAll, suggestedBuckets } from "@/lib/categories";
+import { isCatchAll } from "@/lib/categories";
 import { getActualsByBucket } from "@/lib/budget-engine";
 
 /**
@@ -396,6 +396,79 @@ export async function getSpendSummary(
   };
 }
 
+export type UnassignedTransaction = {
+  id: number;
+  date: string;
+  amount: number;
+  merchantName: string | null;
+  name: string | null;
+  /**
+   * What Plaid thinks it is, or the user's own override when they set one.
+   * Shown so the routing decision can be made against something rather than a
+   * merchant name alone.
+   */
+  displayCategory: string;
+  notes: string | null;
+};
+
+/**
+ * The month's spending that is not in a bucket yet, newest first.
+ *
+ * The predicates are deliberately identical to getSpendSummary's, because the
+ * count on the budgets page links here and the two must not disagree: a link
+ * that says "14 unassigned" and lists 40 is worse than no link.
+ *
+ * `amount > 0` is the same filter, and it is doing real work rather than being a
+ * display choice. Money in is routed to an earnings bucket automatically, and
+ * money moving a credit or loan balance is excluded as neither income nor
+ * spending - both are `amount < 0`, so neither can end up in this queue.
+ */
+export async function getUnassignedTransactions(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<UnassignedTransaction[]> {
+  const accountIds = await getAccountIds(userId);
+  if (accountIds.length === 0) return [];
+
+  const rows = await db.query.transactions.findMany({
+    where: and(
+      inArray(tables.transactions.accountId, accountIds),
+      isNull(tables.transactions.budgetId),
+      gte(tables.transactions.date, from),
+      lte(tables.transactions.date, to),
+      eq(tables.transactions.pending, false),
+      // numeric, so the bound is a string. Postgres casts it for the comparison.
+      gt(tables.transactions.amount, "0"),
+    ),
+    orderBy: (t, { desc }) => [desc(t.date), desc(t.id)],
+    limit: 500,
+    columns: {
+      id: true,
+      date: true,
+      amount: true,
+      merchantName: true,
+      name: true,
+      categoryOverride: true,
+      plaidCategoryPrimary: true,
+      notes: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    date: row.date,
+    amount: toNumber(row.amount),
+    merchantName: row.merchantName,
+    name: row.name,
+    displayCategory:
+      row.categoryOverride ??
+      row.plaidCategoryPrimary ??
+      "Uncategorized",
+    notes: row.notes,
+  }));
+}
+
 export type BudgetSummaryTotals = {
   /** Total budgeted across both spending groups. */
   budgeted: number;
@@ -756,12 +829,16 @@ export async function getCategoryOptions(userId: string): Promise<string[]> {
     for (const row of rows) seen.add(row.category);
   }
 
-  // The suggestions are a starting point, not a limit: every Plaid category
-  // they reference is offered whether or not the user has spent there yet.
-  for (const bucket of suggestedBuckets) {
-    for (const category of bucket.matches) seen.add(category);
-  }
-
+  /*
+   * Only what the user has actually spent in, and nothing else.
+   *
+   * There used to be a seeded template list merged in here. It offered category
+   * values nobody had transacted in - LOAN_PAYMENTS and SAVINGS among them - and
+   * every bucket created from one was a bucket with no real boundary, which is
+   * how "Loan Payments Car Payment" and "Savings & Debt" ended up competing for
+   * the same transactions. A bucket is either one of the user's own categories,
+   * or a name they chose themselves.
+   */
   return [...seen].sort((a, b) => a.localeCompare(b));
 }
 

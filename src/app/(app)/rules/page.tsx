@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
+import { asc, eq } from "drizzle-orm";
 
 import { RulesEditor, type Rule } from "@/components/rules-editor";
 import { requireUser } from "@/lib/auth";
 import { getBudgets, getCategories, getLoans } from "@/lib/queries";
 import { db, tables } from "@/db";
-import { asc, eq } from "drizzle-orm";
+import { groupRuleRows } from "@/lib/rules";
 
 export const metadata: Metadata = { title: "Rules · Finance" };
 
 /**
  * Rules live on their own page because they are no longer only about budgets: a
  * rule can pay down a loan, which mints a payment record and moves a debt
- * balance rather than sorting spending.
+ * balance rather than sorting spending. A rule can also do both at once, one
+ * step each.
  */
 export default async function RulesPage() {
   const user = await requireUser();
@@ -19,7 +21,11 @@ export default async function RulesPage() {
   const [rows, buckets, loans, categories] = await Promise.all([
     db.query.budgetRules.findMany({
       where: eq(tables.budgetRules.userId, user.id),
-      orderBy: [asc(tables.budgetRules.priority), asc(tables.budgetRules.id)],
+      orderBy: [
+        asc(tables.budgetRules.priority),
+        asc(tables.budgetRules.stepOrder),
+        asc(tables.budgetRules.id),
+      ],
     }),
     getBudgets(user.id),
     getLoans(user.id),
@@ -29,21 +35,29 @@ export default async function RulesPage() {
   const bucketNameById = new Map(buckets.map((b) => [b.id, b.name]));
   const loanNameById = new Map(loans.map((l) => [l.id, l.name]));
 
-  const rules: Rule[] = rows.map((rule) => ({
-    id: rule.id,
-    matchType: rule.matchType,
-    matchValue: rule.matchValue,
-    target: rule.loanId === null ? "bucket" : "loan",
-    budgetName:
-      rule.budgetId === null
-        ? null
-        : (bucketNameById.get(rule.budgetId) ?? "Deleted bucket"),
-    loanName:
-      rule.loanId === null
-        ? null
-        : (loanNameById.get(rule.loanId) ?? "Deleted loan"),
-    priority: rule.priority,
-    active: rule.active,
+  /*
+   * One row is one step, so the rows have to be collapsed back into rules before
+   * display - otherwise "amount 453.91 pays the loan" and "amount 453.91 goes to
+   * Car Payment" render as two separate rules, which is the thing this page is
+   * meant to stop doing.
+   */
+  const rules: Rule[] = groupRuleRows(rows).map((group) => ({
+    id: group.id,
+    matchType: group.matchType,
+    matchValue: group.matchValue,
+    steps: group.steps.map((step) => ({
+      target: step.target,
+      budgetId: step.budgetId,
+      budgetName:
+        step.budgetId === null
+          ? null
+          : (bucketNameById.get(step.budgetId) ?? "Deleted bucket"),
+      loanId: step.loanId,
+      loanName:
+        step.loanId === null
+          ? null
+          : (loanNameById.get(step.loanId) ?? "Deleted loan"),
+    })),
   }));
 
   return (
@@ -51,8 +65,9 @@ export default async function RulesPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Rules</h1>
         <p className="text-sm text-neutral-500">
-          Route transactions automatically. Saving a rule applies it to
-          everything that already matches, not just future ones.
+          Route transactions automatically, in as many steps as you like. Saving a
+          rule applies every step to everything that already matches, not just
+          future transactions.
         </p>
       </header>
 
@@ -80,6 +95,10 @@ export default async function RulesPage() {
           </li>
           <li>
             Anything still unclaimed lands in the catch-all bucket.
+          </li>
+          <li>
+            Within one rule, every step runs. A loan step and a bucket step both
+            apply to the same transaction.
           </li>
         </ul>
       </section>

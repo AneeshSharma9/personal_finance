@@ -159,6 +159,9 @@ export async function PATCH(
           transactionId: id,
           paidOn: existing.date,
           amount,
+          // Tagged here on the transactions page, so this is the user's own
+          // decision. A rule being deleted later must not undo it.
+          source: "manual",
         });
       }
     } catch (error) {

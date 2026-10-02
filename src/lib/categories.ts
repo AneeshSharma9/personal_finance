@@ -5,91 +5,18 @@
  * v2 taxonomy for Items created after 2025-12-03, and category values are
  * open-ended, so a frozen list would silently stop matching. Instead a budget row
  * stores a category string and we match it, case-insensitively, against every
- * category a transaction actually carries. The UI offers the categories present
- * in the user's own data, which is always valid.
- */
-
-export type BudgetBucket = {
-  /** Display name, Rocket Money style. */
-  name: string;
-  /** Plaid category values this bucket absorbs. */
-  matches: string[];
-};
-
-/**
- * Suggested starting buckets, mirroring the Rocket Money layout.
+ * category a transaction actually carries.
  *
- * `matches` holds Plaid category values. Plaid lumps groceries and restaurants
- * into one FOOD_AND_DRINK primary, so they are separated on the *detailed*
- * category instead - which is why matching checks detailed as well as primary.
+ * There is also no built-in list of buckets to suggest. The picker offers the
+ * categories present in the user's own transactions, and nothing else, so every
+ * option is one they have actually spent in. A seeded template list used to sit
+ * here, and it was worse than useless: it offered things like LOAN_PAYMENTS and
+ * SAVINGS, so buckets named "Loan Payments Car Payment" and "Savings & Debt"
+ * would be created against categories that were never a real boundary. A
+ * transaction's own Plaid category is the honest unit of a bucket, and a bucket
+ * the user wants to name themselves does not need a category at all - see
+ * `category` on the budgets table, which is nullable for exactly that reason.
  */
-export const suggestedBuckets: BudgetBucket[] = [
-  {
-    name: "Bills & Utilities",
-    matches: [
-      "RENT_AND_UTILITIES",
-      "UTILITIES",
-      "RENT",
-      "ELECTRICITY",
-      "GAS_AND_ELECTRICITY",
-      "INTERNET_AND_CABLE",
-      "TELEPHONE",
-      "WATER",
-    ],
-  },
-  {
-    name: "Groceries",
-    matches: ["FOOD_AND_DRINK_GROCERIES", "GROCERIES"],
-  },
-  {
-    name: "Dining & Drinks",
-    matches: ["FOOD_AND_DRINK_RESTAURANT", "RESTAURANT"],
-  },
-  {
-    name: "Transportation",
-    matches: [
-      "TRANSPORTATION",
-      "GASOLINE_AND_FUEL",
-      "PUBLIC_TRANSPORTATION",
-      "PARKING_AND_TOLLS",
-      "AUTO_PAYMENT",
-    ],
-  },
-  {
-    name: "Insurance",
-    matches: ["LOAN_PAYMENTS", "INSURANCE"],
-  },
-  {
-    name: "Health & Fitness",
-    matches: ["PERSONAL_CARE", "MEDICAL"],
-  },
-  {
-    name: "Shopping",
-    matches: ["GENERAL_MERCHANDISE", "RETAIL", "APPAREL"],
-  },
-  {
-    name: "Entertainment",
-    matches: ["ENTERTAINMENT", "RECREATION"],
-  },
-  {
-    name: "Travel",
-    matches: ["TRAVEL", "AIRLINES"],
-  },
-  {
-    name: "Savings & Debt",
-    matches: ["LOAN_PAYMENTS", "BANK_FEES", "SAVINGS"],
-  },
-  {
-    name: "Income",
-    matches: ["INCOME", "PAYROLL", "PAYCHECK", "INTEREST_EARNINGS"],
-  },
-  {
-    name: "Everything Else",
-    // A catch-all so nothing silently goes untracked. Matched as a literal
-    // bucket rather than a Plaid category; see matchBucket.
-    matches: [],
-  },
-];
 
 /** Category values that mean "money in", used for earnings actuals. */
 export const EARNING_CATEGORY_HINTS = [

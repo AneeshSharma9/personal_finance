@@ -415,26 +415,6 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
 }
 
 /**
- * Clear automatic assignments so the next apply re-evaluates them.
- *
- * Manual assignments are not tracked separately, so this resets everything -
- * used when rules change enough that a clean slate is the honest behaviour.
- */
-export async function resetAssignments(
-  userId: string,
-): Promise<number> {
-  const accountIds = await userAccountIds(userId);
-  if (accountIds.length === 0) return 0;
-
-  const rows = await db.execute<{ id: number }>(sql`
-    update transactions set budget_id = null, updated_at = now()
-    where account_id in ${accountIds} and budget_id is not null
-    returning id
-  `);
-  return rows.length;
-}
-
-/**
  * Per-bucket month-to-date actuals, derived from assignments.
  *
  * Sign-aware, which matters a lot in practice. Plaid is positive for money out

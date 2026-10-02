@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
+import type { LoanPaymentSource } from "@/db/schema";
 import { splitPayment } from "@/lib/loan-math";
 
 /**
@@ -47,6 +48,19 @@ export async function recordLoanPayment(input: {
    * caller rather than silently flipped.
    */
   amount: number;
+  /**
+   * Who decided this transaction pays the loan.
+   *
+   * Required, with no default, on purpose. This column is what lets a removed
+   * rule step undo its own payments and leave the user's manual tags alone, and
+   * a silent default gets that exactly backwards: rows written before the
+   * column existed inherited `'manual'` and were therefore all skipped as
+   * "hand-tagged", so deleting a rule untagged nothing.
+   *
+   * Pass `'rule'` from the rule engine and `'manual'` from the transactions
+   * page. Never omit it.
+   */
+  source: LoanPaymentSource;
 }): Promise<{
   paymentId: number;
   interest: number;
@@ -89,6 +103,7 @@ export async function recordLoanPayment(input: {
         overpayment: split.overpayment.toFixed(2),
         paidOn: input.paidOn,
         accruedFrom,
+        source: input.source,
       })
       .returning({ id: tables.loanPayments.id });
 

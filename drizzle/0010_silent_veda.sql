@@ -1,0 +1,22 @@
+-- loan_payments.source: no more guessing who created a payment.
+--
+-- Two changes, both because the previous DEFAULT 'manual' made deleting a loan
+-- rule untag nothing.
+--
+-- 1. Relabel the existing rows. They were written before this column existed,
+--    so they all inherited 'manual' and every one of them was then skipped by an
+--    undo as "the user tagged this by hand". They were not: they were minted by
+--    the rule engine, in bulk, when a rule was first applied - which is the only
+--    thing in this app that creates payments in volume. Tagging a transaction
+--    from the transactions page is one click on one row at a time.
+--
+--    The alternative would be to relabel only the rows an active rule still
+--    claims, but that misses every payment whose rule has since been deleted -
+--    exactly the rows an undo most needs to reach. Provenance cannot be
+--    recovered after the fact, so every pre-existing row is treated as a rule's
+--    write. From here on the column is written explicitly instead.
+--
+-- 2. Drop the default, so an insert that forgets to say which it is fails loudly
+--    rather than inheriting the one value that makes an undo a no-op.
+ALTER TABLE "loan_payments" ALTER COLUMN "source" DROP DEFAULT;--> statement-breakpoint
+UPDATE "loan_payments" SET "source" = 'rule' WHERE "source" = 'manual';

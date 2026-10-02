@@ -97,24 +97,27 @@ export function BudgetEditor({
   const deleteBudget = (id: number) =>
     call(`/api/budgets?id=${id}`, { method: "DELETE" });
 
-  const applyRules = async (reset: boolean) => {
+  /**
+   * Hand the still-null transactions to the rules.
+   *
+   * Only ever fills empty buckets, so this cannot undo a manual choice - which
+   * is also why the "clear everything and start again" variant is gone. It
+   * cleared manual assignments too, and there was no way to tell afterwards
+   * which of them had been deliberate.
+   */
+  const applyRules = async () => {
     setNotice(null);
     const response = await call("/api/budgets/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reset }),
+      body: JSON.stringify({}),
     });
     if (!response) return;
     const data = (await response.json()) as {
       assigned: number;
-      cleared: number;
       scanned: number;
     };
-    setNotice(
-      reset
-        ? `Cleared ${data.cleared} assignments and routed ${data.assigned} transactions.`
-        : `Routed ${data.assigned} of ${data.scanned} unassigned transactions.`,
-    );
+    setNotice(`Routed ${data.assigned} of ${data.scanned} unassigned transactions.`);
   };
 
   /**
@@ -151,7 +154,13 @@ export function BudgetEditor({
         </p>
       ) : null}
 
-      <ApplyRulesBar unassigned={unassigned} pending={pending} onApply={applyRules} />
+      <ApplyRulesBar
+        unassigned={unassigned}
+        year={year}
+        month={month}
+        pending={pending}
+        onApply={() => void applyRules()}
+      />
 
       {/*
         Earnings leads: you plan the budget from what comes in, then decide
@@ -206,46 +215,59 @@ export function BudgetEditor({
   );
 }
 
+/**
+ * The automatic-assignment bar: what is still unrouted, and the two ways out.
+ *
+ * "Assign unassigned" runs the rules over everything still null. The count links
+ * to the queue for the transactions the rules *cannot* place - a landlord
+ * payment with no recognisable merchant, a split transaction, anything where
+ * Plaid's category is wrong. One button cannot do both jobs, and it used to be
+ * the only one, so those transactions were simply stuck.
+ */
 function ApplyRulesBar({
   unassigned,
+  year,
+  month,
   pending,
   onApply,
 }: {
   unassigned: SpendSummary;
+  /** 0-based, as the page holds it; only used to build the link. */
+  year: number;
+  month: number;
   pending: boolean;
-  onApply: (reset: boolean) => void;
+  onApply: () => void;
 }) {
+  const queue = `/budgets/unassigned?year=${year}&month=${month + 1}`;
+
   return (
     <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-medium">Automatic assignment</p>
-          <p className="text-xs text-neutral-500">
-            {unassigned.unassigned === 0
-              ? "Every transaction is in a bucket."
-              : `${unassigned.unassigned} transactions (${formatCurrency(
-                  unassigned.unassignedTotal,
-                )}) are not in a bucket yet.`}
-          </p>
+          {unassigned.unassigned === 0 ? (
+            <p className="text-xs text-neutral-500">
+              Every transaction is in a bucket.
+            </p>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              <Link href={queue} className="underline underline-offset-2">
+                {unassigned.unassigned} transaction
+                {unassigned.unassigned === 1 ? "" : "s"} (
+                {formatCurrency(unassigned.unassignedTotal)}) are not in a
+                bucket yet
+              </Link>
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => onApply(false)}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-          >
-            Assign unassigned
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => onApply(true)}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-          >
-            Re-assign everything
-          </button>
-        </div>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onApply}
+          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+        >
+          Assign unassigned
+        </button>
       </div>
     </section>
   );
@@ -311,7 +333,7 @@ function BudgetTable({
 
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-neutral-500">
-            Nothing here yet. Pick a category below.
+            Nothing here yet. Add a bucket below.
           </p>
         ) : null}
 
@@ -332,20 +354,14 @@ function BudgetTable({
           without hunting for a button, and whenever the header toggle is open.
         */}
         {rows.length === 0 || adding ? (
-          <CategoryPicker
+          <NewBucketForm
+            kind={kind}
             options={options}
             disabled={pending}
-            emptyLabel={
-              rows.length === 0 ? "Pick a category to add a bucket" : undefined
-            }
-            onPick={(category) => {
+            emptyLabel={rows.length === 0 ? "Pick a category" : "Filter categories"}
+            onCreate={(payload) => {
               setAdding(false);
-              return onSave({
-                kind,
-                name: humanizeCategory(category),
-                category,
-                budgeted: 0,
-              });
+              return onSave(payload);
             }}
           />
         ) : null}
@@ -425,18 +441,14 @@ function EarningsTable({
         ))}
 
         {adding ? (
-          <CategoryPicker
+          <NewBucketForm
+            kind="earning"
             options={options}
             disabled={pending}
             emptyLabel="Pick an income category"
-            onPick={(category) => {
+            onCreate={(payload) => {
               setAdding(false);
-              return onSave({
-                kind: "earning",
-                name: humanizeCategory(category),
-                category,
-                budgeted: 0,
-              });
+              return onSave(payload);
             }}
           />
         ) : null}
@@ -446,24 +458,37 @@ function EarningsTable({
 }
 
 /**
- * The bucket options, taken straight from the categories in the user's own
- * transactions.
+ * Add a bucket, either from one of the user's own categories or from nothing.
  *
- * There are no template buckets. Picking a real category is the only way to add
- * a row, which is what makes "Everything Else"-style leftovers unnecessary: the
- * user's own categories are the buckets.
+ * A category chip fills both the name and the backing category, and either can
+ * then be changed: the name is the user's to choose and the category is what
+ * routing matches on. Leaving the category empty creates a display-only row -
+ * a place to plan money without claiming any transactions, which is the honest
+ * shape for a bucket like "Vacation fund" that has no spending to route yet.
+ *
+ * Picking a real category used to be the *only* way to add a row, which made a
+ * bucket that is not a Plaid category impossible to express at all.
  */
-function CategoryPicker({
+function NewBucketForm({
+  kind,
   options,
   disabled,
-  emptyLabel = "Pick a category",
-  onPick,
+  emptyLabel,
+  onCreate,
 }: {
+  kind: BudgetRow["kind"];
   options: string[];
   disabled: boolean;
-  emptyLabel?: string;
-  onPick: (category: string) => void;
+  emptyLabel: string;
+  onCreate: (payload: {
+    kind: BudgetRow["kind"];
+    name: string;
+    category: string | null;
+    budgeted: number;
+  }) => Promise<Response | null>;
 }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
   const [query, setQuery] = useState("");
 
   const visible = query.trim()
@@ -472,38 +497,112 @@ function CategoryPicker({
       )
     : options;
 
-  if (options.length === 0) {
-    return (
-      <p className="px-4 py-6 text-center text-sm text-neutral-500">
-        {query ? "No categories match." : "No categories available yet."}
-      </p>
-    );
+  const trimmed = name.trim();
+  const canCreate = trimmed.length > 0;
+
+  function submit() {
+    if (!canCreate) return;
+    // Cleared before the await so a slow save cannot be double-submitted, and
+    // so the form is ready for the next bucket either way.
+    setName("");
+    setCategory("");
+    setQuery("");
+    return onCreate({ kind, name: trimmed, category: category || null, budgeted: 0 });
   }
 
   return (
     <div className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
-      <input
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={`${emptyLabel} (${options.length})`}
-        className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-      />
-      <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-        {visible.map((category) => (
-          <button
-            key={category}
-            type="button"
+      <div className="mb-2 flex flex-wrap items-end gap-2">
+        <label className="block min-w-48 flex-1">
+          <span className="mb-1 block text-xs text-neutral-500">Name</span>
+          <input
+            value={name}
             disabled={disabled}
-            onClick={() => onPick(category)}
-            className="rounded-full border border-neutral-300 px-2.5 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="Whatever you want to call it"
+            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+          />
+        </label>
+
+        <label className="block min-w-48 flex-1">
+          <span className="mb-1 block text-xs text-neutral-500">
+            Match transactions by (optional)
+          </span>
+          <select
+            value={category}
+            disabled={disabled}
+            onChange={(event) => setCategory(event.target.value)}
+            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
           >
-            {humanizeCategory(category)}
-          </button>
-        ))}
-        {visible.length === 0 ? (
-          <span className="text-xs text-neutral-500">No matches.</span>
-        ) : null}
+            <option value="">Nothing - display only</option>
+            {options.map((value) => (
+              <option key={value} value={value}>
+                {humanizeCategory(value)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          type="button"
+          disabled={disabled || !canCreate}
+          onClick={() => void submit()}
+          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+        >
+          Create
+        </button>
       </div>
+
+      {/*
+        Chips are the shortcut: one click picks the category and pre-fills the
+        name, which is still what you want most of the time. It no longer
+        creates the row on its own, because the name is meant to be editable.
+      */}
+      {options.length === 0 ? (
+        <p className="text-xs text-neutral-500">
+          No categories in your transactions yet. Name a bucket above and it will
+          stand on its own.
+        </p>
+      ) : (
+        <>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`${emptyLabel} (${options.length})`}
+            className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+          />
+          <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+            {visible.map((value) => (
+              <button
+                key={value}
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  setCategory(value);
+                  // Only fill a name the user has not written themselves.
+                  if (!name.trim()) setName(humanizeCategory(value));
+                }}
+                className={`rounded-full border px-2.5 py-1 text-xs disabled:opacity-50 ${
+                  category === value
+                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                    : "border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                }`}
+              >
+                {humanizeCategory(value)}
+              </button>
+            ))}
+            {visible.length === 0 ? (
+              <span className="text-xs text-neutral-500">No matches.</span>
+            ) : null}
+          </div>
+        </>
+      )}
     </div>
   );
 }
