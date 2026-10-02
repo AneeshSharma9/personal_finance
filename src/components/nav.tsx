@@ -15,15 +15,15 @@ import { usePathname } from "next/navigation";
  */
 export const NAV_ITEMS = [
   { href: "/", label: "Home", full: "Dashboard", icon: HomeIcon },
-  { href: "/accounts", label: "Accounts", full: "Accounts", icon: BankIcon },
+  { href: "/budgets", label: "Budgets", full: "Budgets", icon: PieIcon },
   {
     href: "/transactions",
     label: "Txns",
     full: "Transactions",
     icon: ListIcon,
   },
-  { href: "/budgets", label: "Budgets", full: "Budgets", icon: PieIcon },
   { href: "/rules", label: "Rules", full: "Rules", icon: RuleIcon },
+  { href: "/accounts", label: "Accounts", full: "Accounts", icon: BankIcon },
   { href: "/net-worth", label: "Worth", full: "Net worth", icon: TrendIcon },
 ] as const;
 

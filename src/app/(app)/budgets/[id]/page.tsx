@@ -63,13 +63,19 @@ export default async function BucketPage({
    * Note `signedAmount` is the negation of Plaid's amount, so it is negative for
    * spending. Summing `Math.max(0, signedAmount)` would therefore always be 0 -
    * the totals come off raw Plaid amounts instead, keyed by bucket kind.
+   *
+   * Ignored rows are skipped, matching getActualsByBucket. They are still listed
+   * in the table below, greyed out, so the total and the rows can be read
+   * together without the two disagreeing.
    */
   const total = transactions.reduce(
     (sum, t) =>
       sum +
-      (budget.budgetKind === "earning"
-        ? Math.max(0, -t.amount)
-        : Math.max(0, t.amount)),
+      (t.excluded
+        ? 0
+        : budget.budgetKind === "earning"
+          ? Math.max(0, -t.amount)
+          : Math.max(0, t.amount)),
     0,
   );
   const monthLabel = new Date(Date.UTC(year, month, 1)).toLocaleDateString(

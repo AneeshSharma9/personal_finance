@@ -57,7 +57,8 @@ export async function GET() {
         rule.loanId === null
           ? null
           : (loanNameById.get(rule.loanId) ?? "Deleted loan"),
-      target: rule.loanId === null ? "bucket" : "loan",
+      exclude: rule.exclude,
+      target: rule.exclude ? "ignore" : rule.loanId === null ? "bucket" : "loan",
       priority: rule.priority,
       active: rule.active,
     })),
@@ -132,11 +133,17 @@ export async function PUT(request: Request) {
    * than inferring from whichever id happens to be present, so a half-filled form
    * cannot silently create a bucket rule.
    */
-  const target = raw.target === "loan" ? "loan" : "bucket";
+  const target =
+    raw.target === "loan" ? "loan" : raw.target === "ignore" ? "ignore" : "bucket";
   let budgetId: number | null = null;
   let loanId: number | null = null;
 
-  if (target === "bucket") {
+  if (target === "ignore") {
+    // Nothing to validate: the rule marks matching transactions as excluded, so
+    // they count as neither income nor spending.
+    budgetId = null;
+    loanId = null;
+  } else if (target === "bucket") {
     const value = Number(raw.budgetId);
     if (!Number.isInteger(value) || value <= 0) {
       return Response.json(
@@ -185,6 +192,7 @@ export async function PUT(request: Request) {
     userId: auth.userId,
     budgetId,
     loanId,
+    exclude: target === "ignore",
     matchType,
     matchValue,
     priority,
@@ -200,7 +208,13 @@ export async function PUT(request: Request) {
         tables.budgetRules.matchType,
         tables.budgetRules.matchValue,
       ],
-      set: { budgetId, loanId, priority, active: stored.active },
+      set: {
+        budgetId,
+        loanId,
+        exclude: stored.exclude,
+        priority,
+        active: stored.active,
+      },
     })
     .returning({ id: tables.budgetRules.id });
 
@@ -215,9 +229,80 @@ export async function PUT(request: Request) {
     matchValue: stored.matchValue,
     budgetId,
     loanId,
+    // Without this the target is inferred as "bucket" and an ignore rule
+    // short-circuits to matched: 0 without ever looking at a transaction.
+    exclude: stored.exclude,
   } satisfies StoredRule);
 
   return Response.json({ rule: { id: rule.id }, applied });
+}
+
+/**
+ * Re-apply one existing rule to every transaction that matches it.
+ *
+ * Saving a rule already does this, so this is the "I suspect something changed"
+ * path: transactions synced in after the rule was written, a rule whose target
+ * was edited, or a bulk edit like excluding a run of rows by hand.
+ *
+ * Reads the stored row rather than accepting the rule body, so a rerun can only
+ * ever do what the saved rule says.
+ */
+export async function POST(request: Request) {
+  const auth = await requireUserId();
+  if (!auth.ok) {
+    return Response.json({ error: auth.error }, { status: auth.status });
+  }
+
+  let id: unknown;
+  try {
+    const body = (await request.json()) as { id?: unknown };
+    id = body.id;
+  } catch {
+    return Response.json({ error: "Body must be JSON." }, { status: 400 });
+  }
+
+  const ruleId = Number(id);
+  if (!Number.isInteger(ruleId) || ruleId <= 0) {
+    return Response.json({ error: "A numeric id is required." }, { status: 400 });
+  }
+
+  const rule = await db.query.budgetRules.findFirst({
+    where: and(
+      eq(tables.budgetRules.id, ruleId),
+      eq(tables.budgetRules.userId, auth.userId),
+    ),
+  });
+  if (!rule) {
+    // 404 rather than 403: do not confirm that someone else's rule exists.
+    return Response.json({ error: "Rule not found." }, { status: 404 });
+  }
+
+  try {
+    const applied = await applyRuleToHistory(auth.userId, {
+      id: rule.id,
+      matchType: rule.matchType,
+      matchValue: rule.matchValue,
+      budgetId: rule.budgetId,
+      loanId: rule.loanId,
+      exclude: rule.exclude,
+    } satisfies StoredRule);
+
+    return Response.json({ rule: { id: rule.id }, applied });
+  } catch (error) {
+    // applyRuleToHistory throws when the stored rule has no usable target,
+    // which would otherwise surface as a bare 500.
+    console.error(
+      `[rules] rerun of ${rule.id} failed:`,
+      error instanceof Error ? error.message : error,
+    );
+    return Response.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Could not re-apply that rule.",
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE(request: Request) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
 import { Toast } from "@/components/toast";
 
@@ -21,7 +21,7 @@ export type Rule = {
   id: number;
   matchType: "merchant" | "category" | "amount";
   matchValue: string;
-  target: "bucket" | "loan";
+  target: "bucket" | "loan" | "ignore";
   budgetName: string | null;
   loanName: string | null;
   priority: number;
@@ -43,10 +43,12 @@ export function RulesEditor({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  /** Bumped per notice so the Toast remounts and replays its animation. */
+  const noticeSeq = useRef(0);
 
   const [matchType, setMatchType] = useState<Rule["matchType"]>("merchant");
   const [matchValue, setMatchValue] = useState("");
-  const [target, setTarget] = useState<"bucket" | "loan">("bucket");
+  const [target, setTarget] = useState<"bucket" | "loan" | "ignore">("bucket");
   const [budgetId, setBudgetId] = useState("");
   const [loanId, setLoanId] = useState("");
 
@@ -88,20 +90,55 @@ export function RulesEditor({
     const applied = data.applied;
 
     setMatchValue("");
-    if (!applied) return;
-
     // Say what actually happened. "Moved 12 transactions" is the whole point of
     // the backfill, and reporting it is what makes a no-op legible.
+    if (applied) reportApplied(applied);
+  }
+
+  /**
+   * Re-apply a saved rule without changing it.
+   *
+   * Saving already backfills, so this exists for when the world moved on:
+   * transactions that synced in afterwards, or rows excluded by hand in bulk.
+   */
+  async function rerun(id: number) {
+    const response = await call("/api/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!response) return;
+
+    const data = (await response.json()) as {
+      applied?: { moved: number; matched: number; target: string };
+    };
+    if (data.applied) reportApplied(data.applied);
+  }
+
+/** One phrasing for both saving and re-running, so the counts read alike. */
+  function reportApplied(applied: {
+    moved: number;
+    matched: number;
+    target: string;
+  }) {
+    const where =
+      applied.target === "loan"
+        ? "to the loan"
+        : applied.target === "ignore"
+          ? "out of your budget"
+          : "to the bucket";
+
+    noticeSeq.current += 1;
     setNotice({
-      id: Date.now(),
+      id: noticeSeq.current,
       text:
         applied.moved === 0
           ? applied.matched === 0
-            ? "Rule saved. Nothing matched yet."
-            : `Rule saved. ${applied.matched} already correct.`
-          : `Rule saved. Moved ${applied.moved} past transaction${
+            ? "Nothing matched yet."
+            : `Matched ${applied.matched}, all already up to date.`
+          : `Moved ${applied.moved} transaction${
               applied.moved === 1 ? "" : "s"
-            } to ${applied.target === "loan" ? "the loan" : "the bucket"}.`,
+            } ${where}.`,
     });
   }
 
@@ -111,7 +148,7 @@ export function RulesEditor({
 
   const canSave =
     matchValue.trim().length > 0 &&
-    (target === "bucket" ? budgetId !== "" : loanId !== "");
+    target === "ignore" || (target === "bucket" ? budgetId !== "" : loanId !== "");
 
   return (
     <div className="space-y-4">
@@ -178,6 +215,7 @@ export function RulesEditor({
             >
               <option value="bucket">A budget bucket</option>
               <option value="loan">A loan</option>
+              <option value="ignore">Ignore (count as neither)</option>
             </select>
           </label>
 
@@ -185,7 +223,12 @@ export function RulesEditor({
             <span className="mb-1 block text-xs text-neutral-500">
               {target === "bucket" ? "Bucket" : "Loan"}
             </span>
-            {target === "bucket" ? (
+            {target === "ignore" ? (
+              <p className="rounded-md border border-dashed border-neutral-300 px-3 py-2 text-sm text-neutral-500 dark:border-neutral-700">
+                Matches will be excluded from your budget entirely: not counted as
+                income, not counted as spending.
+              </p>
+            ) : target === "bucket" ? (
               <select
                 value={budgetId}
                 onChange={(event) => setBudgetId(event.target.value)}
@@ -263,16 +306,48 @@ export function RulesEditor({
                   &rarr;{" "}
                   {rule.target === "loan"
                     ? `pays ${rule.loanName ?? "a loan"}`
-                    : rule.budgetName ?? "a bucket"}
+                    : rule.target === "ignore"
+                      ? "is ignored"
+                      : rule.budgetName ?? "a bucket"}
                 </span>
               </p>
-              <button
-                type="button"
-                onClick={() => remove(rule.id)}
-                className="text-xs text-red-600 underline dark:text-red-400"
-              >
-                Delete
-              </button>
+              <span className="flex shrink-0 items-center gap-3">
+                {/*
+                  Re-apply without editing. Saving already backfills, so this is
+                  for when transactions arrived afterwards or rows were excluded
+                  by hand.
+                */}
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => void rerun(rule.id)}
+                  title="Re-apply this rule to all matching transactions"
+                  aria-label={`Re-apply the rule ${rule.matchType} ${rule.matchValue}`}
+                  className="text-neutral-400 transition hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-200"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                    className="h-4 w-4"
+                  >
+                    {/* Circular arrow, the same glyph as the Refresh button. */}
+                    <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+                    <path d="M20 4v7h-7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove(rule.id)}
+                  className="text-xs text-red-600 underline dark:text-red-400"
+                >
+                  Delete
+                </button>
+              </span>
             </li>
           ))}
         </ul>

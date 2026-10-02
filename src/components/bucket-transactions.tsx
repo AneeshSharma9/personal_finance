@@ -61,6 +61,28 @@ export function BucketTransactions({
     startTransition(() => router.refresh());
   }
 
+  /**
+   * Ignore / un-ignore a row without moving it.
+   *
+   * The row keeps its bucket: `excluded` only stops it counting towards the
+   * total, so the user can still see and reverse the decision in place.
+   */
+  async function setExcluded(transactionId: number, excluded: boolean) {
+    setError(null);
+    const response = await fetch(`/api/transactions/${transactionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ excluded }),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json()) as { error?: string };
+      setError(data.error ?? "Could not update that transaction.");
+      return;
+    }
+    startTransition(() => router.refresh());
+  }
+
   if (transactions.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
@@ -84,7 +106,11 @@ export function BucketTransactions({
         {transactions.map((transaction) => (
           <li
             key={transaction.id}
-            className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
+            className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 ${
+              transaction.excluded
+                ? "text-neutral-400 dark:text-neutral-500"
+                : ""
+            }`}
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">
@@ -96,9 +122,54 @@ export function BucketTransactions({
               </p>
             </div>
 
-            <p className="shrink-0 text-sm tabular-nums">
+            <p
+              className={`shrink-0 text-sm tabular-nums ${
+                transaction.excluded ? "line-through" : ""
+              }`}
+            >
               {formatCurrency(transaction.signedAmount, { showSign: true })}
             </p>
+
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                void setExcluded(transaction.id, !transaction.excluded)
+              }
+              aria-pressed={transaction.excluded}
+              title={
+                transaction.excluded
+                  ? "Count this transaction again"
+                  : "Ignore this transaction"
+              }
+              aria-label={
+                transaction.excluded
+                  ? `Stop ignoring ${transaction.merchantName ?? transaction.name}`
+                  : `Ignore ${transaction.merchantName ?? transaction.name}`
+              }
+              className={`shrink-0 rounded p-1 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+                transaction.excluded
+                  ? "text-neutral-500 dark:text-neutral-400"
+                  : "text-neutral-300 hover:text-neutral-600 dark:text-neutral-600 dark:hover:text-neutral-300"
+              }`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+                className="h-4 w-4"
+              >
+                {/* Eye */}
+                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="2.5" />
+                {/* Slash, only when ignored. */}
+                {transaction.excluded ? <path d="M3 3l18 18" /> : null}
+              </svg>
+            </button>
 
             <label className="shrink-0">
               <span className="sr-only">

@@ -24,6 +24,8 @@ import { categoryCandidates, isCatchAll, isEarningCategory } from "@/lib/categor
 export type AssignmentResult = {
   scanned: number;
   assigned: number;
+  /** Rows marked excluded rather than bucketed (card payments, and so on). */
+  excluded?: number;
   byBucket: Record<string, number>;
 };
 
@@ -138,6 +140,35 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
   };
 }
 
+/**
+ * Is this row a movement of a liability's balance rather than real income?
+ *
+ * Plaid records a credit card payment as a NEGATIVE amount on the card account,
+ * because paying a card reduces the balance owed. Read naively that looks
+ * exactly like a deposit, which is how "CAPITAL ONE MOBILE PYMT -487.14" ended
+ * up counted as earnings.
+ *
+ * The account type is what disambiguates it: money arriving at a depository,
+ * investment or other *asset* account is income; money arriving at a credit or
+ * loan account is a payment against a debt, which is neither income nor
+ * spending.
+ */
+export function isBalanceMovement(row: {
+  amount: number;
+  accountType: string;
+}): boolean {
+  if (row.amount >= 0) return false;
+  return row.accountType === "credit" || row.accountType === "loan";
+}
+
+/** Money arriving at an asset account. The opposite of the above. */
+function isDeposit(row: { amount?: number; accountType?: string }): boolean {
+  if (row.amount === undefined) return false;
+  if (row.amount >= 0) return false;
+  if (row.accountType === undefined) return true;
+  return row.accountType !== "credit" && row.accountType !== "loan";
+}
+
 /** Decide which bucket a transaction belongs in, or null to leave it alone. */
 export function resolveBucket(
   row: {
@@ -148,6 +179,11 @@ export function resolveBucket(
     plaidCategoryDetailed: string | null;
     /** Plaid sign: positive for money out. Amount rules compare the magnitude. */
     amount?: number;
+    /**
+     * Needed to tell a real deposit from a card payment. Optional so the pure
+     * matcher stays usable without it, at the cost of the account-type check.
+     */
+    accountType?: string;
   },
   rules: RuleSet,
 ): number | null {
@@ -174,15 +210,17 @@ export function resolveBucket(
    *
    * Category keywords alone miss most real deposits: Plaid files a payment from
    * an employer as TRANSFER_IN, not PAYROLL, so a payroll deposit would land in
-   * a spending bucket and never appear under earnings at all. Money arriving is
-   * the actual signal.
+   * a spending bucket and never appear under earnings at all.
    *
-   * Plaid's sign convention is positive for money out, so negative is an inflow.
+   * Scoped to asset accounts on purpose. Plaid's sign convention is positive for
+   * money out, so negative is an inflow - but on a credit or loan account an
+   * inflow is a payment reducing a balance, not earnings. See
+   * isBalanceMovement.
    */
-  const isDeposit = row.amount !== undefined && row.amount < 0;
+  const deposited = row.amount !== undefined && isDeposit(row);
 
   // Income goes to an earnings bucket and never to a spending one.
-  if (isIncome || isDeposit) {
+  if (isIncome || deposited) {
     return rules.earningBudgetIds[0] ?? null;
   }
 
@@ -286,6 +324,9 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
       inArray(tables.transactions.accountId, accountIds),
       isNull(tables.transactions.budgetId),
       eq(tables.transactions.pending, false),
+      // Excluded rows are neither income nor spending. Leave them alone even if
+      // their budgetId is cleared, or they would drift back into a bucket.
+      eq(tables.transactions.excluded, false),
     ),
     columns: {
       id: true,
@@ -296,8 +337,22 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
       plaidCategoryPrimary: true,
       plaidCategoryDetailed: true,
       amount: true,
+      accountId: true,
     },
   });
+
+  /*
+   * Account type per accountId, loaded in its own query because the schema
+   * declares no Drizzle relations for the relational `with` join.
+   */
+  const accountTypes = new Map<string, string>(
+    (
+      await db.query.accounts.findMany({
+        where: inArray(tables.accounts.id, accountIds),
+        columns: { id: true, type: true },
+      })
+    ).map((account) => [String(account.id), account.type]),
+  );
 
   if (pending.length === 0) {
     return { scanned: 0, assigned: 0, byBucket: {} };
@@ -306,12 +361,32 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
   const updates: { id: number; budgetId: number }[] = [];
   const byBucket: Record<string, number> = {};
 
+  const exclusions: number[] = [];
+  let excludedCount = 0;
+
   for (const row of pending) {
-    // Amount rules compare a number; the column arrives as a numeric string.
-    const budgetId = resolveBucket({ ...row, amount: toNumber(row.amount) }, rules);
+    const amount = toNumber(row.amount);
+    const accountType = accountTypes.get(String(row.accountId)) ?? "other";
+
+    // A card payment reduces a balance; it is neither income nor spending, so it
+    // is recorded as excluded rather than given a bucket that would distort one.
+    if (isBalanceMovement({ amount, accountType })) {
+      exclusions.push(row.id);
+      continue;
+    }
+
+    const budgetId = resolveBucket({ ...row, amount, accountType }, rules);
     if (budgetId === null) continue;
     updates.push({ id: row.id, budgetId });
     byBucket[String(budgetId)] = (byBucket[String(budgetId)] ?? 0) + 1;
+  }
+
+  if (exclusions.length > 0) {
+    await db
+      .update(tables.transactions)
+      .set({ excluded: true, updatedAt: new Date() })
+      .where(inArray(tables.transactions.id, exclusions));
+    excludedCount = exclusions.length;
   }
 
   if (updates.length === 0) {
@@ -334,6 +409,7 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
   return {
     scanned: pending.length,
     assigned: updates.length,
+    excluded: excludedCount,
     byBucket,
   };
 }
@@ -404,6 +480,8 @@ export async function getActualsByBucket(
         and date >= ${from}
         and date <= ${to}
         and pending = false
+        -- Ignored rows keep their bucket for context but must not inflate it.
+        and excluded = false
         and amount ${incoming ? sql`< 0` : sql`> 0`}
       group by budget_id
     `);

@@ -314,6 +314,15 @@ export const transactions = pgTable(
     /** User's choice. Falls back to plaid_category_primary when null. */
     categoryOverride: text("category_override"),
     /**
+     * Excluded from budgeting entirely: not counted as income, not counted as
+     * spending, not assigned a bucket.
+     *
+     * Set for movements that are not real income or spending - a credit card
+     * payment reduces the balance owed, so it is neither. Also the general
+     * escape hatch for anything the user does not want in their budget.
+     */
+    excluded: boolean("excluded").notNull().default(false),
+    /**
      * Budget bucket this transaction was assigned to.
      *
      * Assignment is separate from Plaid's category on purpose: a merchant rule
@@ -352,6 +361,8 @@ export const transactions = pgTable(
     // Serves the transactions list, which always filters by account + date
     // and is the hottest query in the app.
     index("transactions_account_date_idx").on(t.accountId, t.date),
+    // The engine sweeps unassigned, unexcluded rows.
+    index("transactions_excluded_idx").on(t.excluded),
   ],
 );
 
@@ -410,6 +421,14 @@ export const budgetRules = pgTable(
     loanId: integer("loan_id").references(() => loans.id, {
       onDelete: "cascade",
     }),
+    /**
+     * Rule says "ignore these" rather than "route these somewhere".
+     *
+     * A third target alongside bucket and loan, because excluding is a real
+     * outcome rather than a bucket of its own. Enforced by the one-target CHECK
+     * with exactly one of budget_id, loan_id or exclude set.
+     */
+    exclude: boolean("exclude").notNull().default(false),
     matchType: budgetRuleMatchType("match_type").notNull(),
     /**
      * For `merchant`: a case-insensitive substring of the merchant or raw

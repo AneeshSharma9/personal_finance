@@ -646,6 +646,12 @@ export type BucketTransaction = {
   notes: string | null;
   /** Positive for spending; the bucket detail shows this sign as-is. */
   signedAmount: number;
+  /**
+   * Ignored: still shown in this bucket, greyed out, and excluded from its
+   * total. Deliberately not removed, so the row remains visible and can be
+   * un-ignored from where it would otherwise have been.
+   */
+  excluded: boolean;
 };
 
 /** One bucket, scoped to its owner. Null when it isn't the user's. */
@@ -699,6 +705,8 @@ export async function getTransactionsInBucket(
       displayCategory:
         row.categoryOverride ?? row.plaidCategoryPrimary ?? "Uncategorized",
       notes: row.notes,
+      // Kept in the bucket but not counted towards its total.
+      excluded: row.excluded,
     };
   });
 }

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 process.loadEnvFile(".env.local");
 
-const { resolveBucket } = await import("@/lib/budget-engine");
+const { isBalanceMovement, resolveBucket } = await import("@/lib/budget-engine");
 type RuleSet = import("@/lib/budget-engine").RuleSet;
 
 /** Bucket ids used across these tests. */
@@ -178,6 +178,59 @@ test("a deposit beats a merchant rule, the same way income does", () => {
 test("with no earnings bucket a deposit is left unassigned, not misfiled", () => {
   const row = txn({ plaidCategoryPrimary: "TRANSFER_IN", amount: "-500" });
   assert.equal(resolveBucket(row, rules({ earningBudgetIds: [] })), null);
+});
+
+test("a credit card payment is not income", () => {
+  // The reported bug: "CAPITAL ONE MOBILE PYMT -487.14" on a Savor card landed in
+  // Income, because a negative amount on a credit account looks like a deposit.
+  const row = txn({
+    merchantName: "CAPITAL ONE MOBILE PYMT",
+    plaidCategoryPrimary: "LOAN_PAYMENTS",
+    amount: "-487.14",
+    accountType: "credit",
+  });
+  assert.notEqual(
+    resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+    B.income,
+  );
+});
+
+test("a payment on a loan account is not income either", () => {
+  const row = txn({
+    plaidCategoryPrimary: "LOAN_PAYMENTS",
+    amount: "-600",
+    accountType: "loan",
+  });
+  assert.notEqual(
+    resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+    B.income,
+  );
+});
+
+test("a real deposit to a checking account is still income", () => {
+  // The fix must not break the case the deposit rule was added for.
+  for (const accountType of ["depository", "investment"]) {
+    const row = txn({
+      plaidCategoryPrimary: "TRANSFER_IN",
+      amount: "-2500",
+      accountType,
+    });
+    assert.equal(
+      resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+      B.income,
+      `${accountType} inflow should be income`,
+    );
+  }
+});
+
+test("isBalanceMovement only flags liability-side inflows", () => {
+  // The pure predicate behind the exclusion.
+  assert.equal(isBalanceMovement({ amount: -487.14, accountType: "credit" }), true);
+  assert.equal(isBalanceMovement({ amount: -600, accountType: "loan" }), true);
+  assert.equal(isBalanceMovement({ amount: -2500, accountType: "depository" }), false);
+  assert.equal(isBalanceMovement({ amount: -50, accountType: "investment" }), false);
+  // Outflows are never movements of a balance in this sense.
+  assert.equal(isBalanceMovement({ amount: 40, accountType: "credit" }), false);
 });
 
 test("income goes to the earnings bucket, never to spending", () => {

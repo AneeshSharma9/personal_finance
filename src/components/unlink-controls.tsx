@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Destructive-action confirmation for unlinking.
@@ -53,6 +53,44 @@ function toImpact(data: unknown): UnlinkImpact | null {
   };
 }
 
+/**
+ * Shared behaviour for a destructive confirmation.
+ *
+ * All three of these were missing, and they matter more here than on an
+ * ordinary dialog because the consequence of a stray Enter is deleting data:
+ *
+ *  - Escape cancels. Without it, the only way out is finding Cancel with the
+ *    mouse.
+ *  - Clicking the backdrop cancels. Tapping "outside" to dismiss is what people
+ *    expect from a modal.
+ *  - Focus moves into the dialog on open. Otherwise focus stays on the control
+ *    that opened it - which is then unmounted, dropping focus to <body>, and a
+ *    subsequent Enter can land on the destructive button.
+ *
+ * Both call sites pass a busy flag so a dialog cannot be dismissed mid-request.
+ */
+function useConfirmationDialog(
+  open: boolean,
+  busy: boolean,
+  onCancel: () => void,
+) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) onCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    panelRef.current?.focus();
+
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, busy, onCancel]);
+
+  return panelRef;
+}
+
 export function UnlinkButton({
   itemId,
   institutionName,
@@ -67,6 +105,9 @@ export function UnlinkButton({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
+
+  const cancel = () => setOpen(false);
+  const panelRef = useConfirmationDialog(open, busy, cancel);
 
   /**
    * Fetch the counts on open, so the warning is concrete ("this will delete 387
@@ -145,9 +186,18 @@ export function UnlinkButton({
       role="dialog"
       aria-modal="true"
       aria-label={`Unlink ${label}`}
+      onClick={(event) => {
+        // Only a click that both starts and ends on the backdrop dismisses, so a
+        // drag that began inside the panel does not cancel the dialog.
+        if (event.target === event.currentTarget && !busy) cancel();
+      }}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-800">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl outline-none dark:bg-neutral-800"
+      >
         <h2 className="text-lg font-semibold">Unlink {label}?</h2>
 
         <div className="mt-3 space-y-3 text-sm">
@@ -253,6 +303,9 @@ export function RemoveAccountButton({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const cancel = () => setOpen(false);
+  const panelRef = useConfirmationDialog(open, busy, cancel);
+
   async function remove() {
     setBusy(true);
     setError(null);
@@ -292,9 +345,18 @@ export function RemoveAccountButton({
       role="dialog"
       aria-modal="true"
       aria-label={`Remove ${accountName}`}
+      onClick={(event) => {
+        // Only a click that both starts and ends on the backdrop dismisses, so a
+        // drag that began inside the panel does not cancel the dialog.
+        if (event.target === event.currentTarget && !busy) cancel();
+      }}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-800">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl outline-none dark:bg-neutral-800"
+      >
         <h2 className="text-lg font-semibold">Remove {accountName}?</h2>
         <p className="mt-2 text-sm">
           This deletes the account and its{" "}

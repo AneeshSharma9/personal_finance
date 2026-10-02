@@ -19,15 +19,17 @@ import { recordLoanPayment } from "@/lib/loan-payments";
  * includes last month's KFC.
  */
 
-export type RuleTargetKind = "bucket" | "loan";
-
 export type StoredRule = {
   id: number;
   matchType: "merchant" | "category" | "amount";
   matchValue: string;
   budgetId: number | null;
   loanId: number | null;
+  /** Rule says "ignore these" rather than routing them somewhere. */
+  exclude?: boolean;
 };
+
+export type RuleTargetKind = "bucket" | "loan" | "ignore";
 
 export type ApplyResult = {
   /** Transactions whose target actually changed. */
@@ -79,6 +81,7 @@ async function ruleCandidateRows(
       plaidCategoryPrimary: true,
       plaidCategoryDetailed: true,
       budgetId: true,
+      excluded: true,
     },
   });
 }
@@ -242,13 +245,64 @@ export async function applyLoanRuleToHistory(
   return { moved, matched, target: "loan" };
 }
 
+/**
+ * Apply one "ignore these" rule to every matching transaction.
+ *
+ * The row keeps its bucket and is only flagged, so it stays visible in place -
+ * greyed out and excluded from the total - rather than disappearing. That is why
+ * this is separate from applyBucketRuleToHistory: exclusion has to be able to
+ * reach rows that already have a bucket, which the routing path never revisits.
+ */
+export async function applyIgnoreRuleToHistory(
+  userId: string,
+  rule: StoredRule,
+): Promise<ApplyResult> {
+  const rows = await ruleCandidateRows(userId);
+  let matched = 0;
+  let moved = 0;
+
+  for (const row of rows) {
+    if (!matchesStoredRule({ ...row, amount: toNumber(row.amount) }, rule)) {
+      continue;
+    }
+    matched += 1;
+    // Only the flag changes: the row stays in whatever bucket it was in so the
+    // user can still see it there, greyed out. Actuals skip excluded rows.
+    if (row.excluded) continue;
+
+    moved += 1;
+    await db
+      .update(tables.transactions)
+      .set({ excluded: true, updatedAt: new Date() })
+      .where(eq(tables.transactions.id, row.id));
+  }
+
+  return { moved, matched, target: "ignore" };
+}
+
 export async function applyRuleToHistory(
   userId: string,
   rule: StoredRule,
 ): Promise<ApplyResult> {
-  return rule.loanId === null
-    ? applyBucketRuleToHistory(userId, rule)
-    : applyLoanRuleToHistory(userId, rule);
+  if (rule.exclude) return applyIgnoreRuleToHistory(userId, rule);
+  if (rule.loanId !== null) return applyLoanRuleToHistory(userId, rule);
+
+  /*
+   * A bucket rule with no bucket id is not a rule that matched nothing - it is a
+   * rule that was never fully specified, and the two look identical if the
+   * target is inferred. Reporting 0/0 here is what made an ignore rule that
+   * forgot its flag look like "no matching transactions" instead of a bug.
+   *
+   * The DB CHECK guarantees exactly one target, so reaching this is a caller
+   * error, and it should say so rather than quietly return a plausible number.
+   */
+  if (rule.budgetId === null) {
+    throw new Error(
+      `Rule ${rule.id} has no target. Exactly one of budgetId, loanId or exclude must be set.`,
+    );
+  }
+
+  return applyBucketRuleToHistory(userId, rule);
 }
 
 /**

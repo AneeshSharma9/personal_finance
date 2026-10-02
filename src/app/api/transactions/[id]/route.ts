@@ -37,6 +37,7 @@ export async function PATCH(
     notes?: unknown;
     budgetId?: unknown;
     loanId?: unknown;
+    excluded?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -48,6 +49,7 @@ export async function PATCH(
     categoryOverride: string | null;
     notes: string | null;
     budgetId: number | null;
+    excluded: boolean;
     updatedAt: Date;
   }>;
 
@@ -67,6 +69,9 @@ export async function PATCH(
     }
     if ("budgetId" in body) {
       patch.budgetId = await normalizeBudgetId(body.budgetId, auth.userId);
+    }
+    if ("excluded" in body) {
+      patch.excluded = normalizeExcluded(body.excluded);
     }
 
     /*
@@ -90,11 +95,15 @@ export async function PATCH(
     throw error;
   }
 
-  if (Object.keys(patch).length === 1 && !("loanId" in body)) {
+  if (
+    Object.keys(patch).length === 1 &&
+    !("loanId" in body) &&
+    !("excluded" in body)
+  ) {
     return Response.json(
       {
         error:
-          "Nothing to update. Send categoryOverride, notes, budgetId, or loanId.",
+          "Nothing to update. Send categoryOverride, notes, budgetId, loanId, or excluded.",
       },
       { status: 400 },
     );
@@ -183,6 +192,7 @@ export async function PATCH(
         categoryOverride: tables.transactions.categoryOverride,
         notes: tables.transactions.notes,
         budgetId: tables.transactions.budgetId,
+        excluded: tables.transactions.excluded,
       });
     return row ?? null;
   });
@@ -259,6 +269,12 @@ async function findOwnedTransaction(
     columns: { id: true, amount: true, date: true },
   });
   return row ?? null;
+}
+
+/** Ignoring is a boolean; anything else is rejected rather than coerced. */
+function normalizeExcluded(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  throw new InvalidField("excluded must be true or false.");
 }
 
 /** Empty string clears the override, which restores Plaid's own category. */
