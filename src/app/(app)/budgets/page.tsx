@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
 import { monthRange } from "@/lib/format";
@@ -128,6 +129,21 @@ export default async function BudgetsPage({
       />
 
       <BudgetSummary totals={summary} />
+
+      {/*
+        Cash flow answers a different question from the budget grid below, so it
+        gets its own page rather than another card here: the same month, but as a
+        Sankey of income against what it was spent on. Carries the month across so
+        the two views line up on what they are describing.
+      */}
+      <div className="flex justify-end">
+        <Link
+          href={`/budgets/cash-flow?scope=month&year=${year}&month=${month + 1}`}
+          className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Cash flow
+        </Link>
+      </div>
 
       <BudgetEditor
         basics={basics}

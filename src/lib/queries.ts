@@ -710,6 +710,112 @@ export async function getLatestTransactionMonth(
   return { year, month: month - 1 };
 }
 
+export type CashFlowBucket = {
+  id: string;
+  label: string;
+  kind: "income" | "spending";
+  amount: number;
+  /** Budgeted for the same window. Context for the tooltip, never a flow. */
+  budgeted: number;
+};
+
+export type CashFlowData = {
+  from: string;
+  to: string;
+  income: CashFlowBucket[];
+  spending: CashFlowBucket[];
+  /** Spending with no bucket. Part of `spending`, but reported on its own. */
+  unassigned: number;
+};
+
+/**
+ * Where the money came from and where it went, for the cash flow Sankey.
+ *
+ * `months` is how many months the window covers, so a budgeted figure can be
+ * scaled for year-to-date instead of showing one month of limits beside twelve
+ * months of spending.
+ *
+ * Income is read from **earnings buckets**, exactly as `getMonthlySeries` and
+ * the summary card do. Counting every negative amount instead would sweep in
+ * transfers between the user's own accounts, so the Sankey would claim income
+ * the rest of the app does not, and its totals would not tie to the budgets page.
+ * The buckets also decide the shape of the diagram, so the diagram and the rule
+ * that fills the buckets have to agree.
+ */
+export async function getCashFlow(
+  userId: string,
+  from: string,
+  to: string,
+  months: number,
+): Promise<CashFlowData> {
+  const empty: CashFlowData = {
+    from,
+    to,
+    income: [],
+    spending: [],
+    unassigned: 0,
+  };
+
+  const buckets = await db.query.budgets.findMany({
+    where: eq(tables.budgets.userId, userId),
+    columns: { id: true, name: true, budgetKind: true, monthlyLimit: true },
+    orderBy: [asc(tables.budgets.sortOrder), asc(tables.budgets.id)],
+  });
+
+  if (buckets.length === 0) return empty;
+
+  const actuals = await getActualsByBucket(userId, from, to);
+  const accountIds = await getAccountIds(userId);
+
+  const income: CashFlowBucket[] = [];
+  const spending: CashFlowBucket[] = [];
+
+  for (const bucket of buckets) {
+    const amount = actuals.get(bucket.id) ?? 0;
+    if (amount <= 0) continue;
+
+    const isEarning = bucket.budgetKind === "earning";
+    const row: CashFlowBucket = {
+      id: `bucket:${bucket.id}`,
+      label: bucket.name,
+      kind: isEarning ? "income" : "spending",
+      amount,
+      // An earnings bucket's limit is a target, not a cost, and spending buckets
+      // are the only ones a limit means anything for.
+      budgeted: isEarning
+        ? 0
+        : toNumber(bucket.monthlyLimit) * Math.max(months, 1),
+    };
+
+    (isEarning ? income : spending).push(row);
+  }
+
+  /*
+   * Spending nobody has filed yet. Counted rather than dropped: excluding it would
+   * let the diagram report a healthy Remaining while real money went somewhere
+   * unlabelled, which is the one thing a cash flow view must not do.
+   *
+   * Same filters as getSpendSummary, so the two figures agree.
+   */
+  let unassigned = 0;
+  if (accountIds.length > 0) {
+    const [row] = await db.execute<{ total: string }>(sql`
+      select coalesce(sum(amount), 0)::text as total
+      from transactions
+      where account_id in ${accountIds}
+        and date >= ${from}
+        and date <= ${to}
+        and pending = false
+        and excluded = false
+        and budget_id is null
+        and amount > 0
+    `);
+    unassigned = toNumber(row?.total ?? 0);
+  }
+
+  return { from, to, income, spending, unassigned };
+}
+
 export type BucketTransaction = {
   id: number;
   plaidTransactionId: string;
