@@ -1,0 +1,36 @@
+CREATE TABLE "budget_worksheet" (
+	"id" integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "budget_worksheet_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1),
+	"user_id" text NOT NULL,
+	"derive_gross" boolean DEFAULT false NOT NULL,
+	"gross_salary" numeric(14, 2) DEFAULT '0' NOT NULL,
+	"asop_rate" numeric(6, 4) DEFAULT '0.12' NOT NULL,
+	"federal_withholding" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"federal_med_ee" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"federal_oasdi_ee" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"state_withholding" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"k401k" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"vision" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"dental" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"hsa" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"medical" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"roth_ira" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"rent" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"utilities" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"wifi" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"renters_insurance" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"car_payment" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"car_insurance" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"gas" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"groceries_dining" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"student_loans" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"brokerage" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"hysa" numeric(12, 2) DEFAULT '0' NOT NULL,
+	"ideal_needs" numeric(6, 4) DEFAULT '0.5' NOT NULL,
+	"ideal_savings" numeric(6, 4) DEFAULT '0.3' NOT NULL,
+	"ideal_wants" numeric(6, 4) DEFAULT '0.2' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+ALTER TABLE "budget_worksheet" ADD CONSTRAINT "budget_worksheet_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "budget_worksheet_user_id_key" ON "budget_worksheet" USING btree ("user_id");

@@ -1,0 +1,2 @@
+ALTER TABLE "budget_worksheet" ADD COLUMN "pay_periods_per_month" numeric(6, 4) DEFAULT '2.1667' NOT NULL;--> statement-breakpoint
+ALTER TABLE "budget_worksheet" ADD COLUMN "include_retirement_in_savings" boolean DEFAULT false NOT NULL;

@@ -982,6 +982,175 @@ export type LoanPaymentSource = (typeof loanPaymentSource.enumValues)[number];
 
 export type User = typeof users.$inferSelect;
 export type Item = typeof items.$inferSelect;
+// ---------------------------------------------------------------------------
+// budget_worksheet
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved budget worksheet per user, ported from the "After Raise" sheet of a
+ * spreadsheet.
+ *
+ * Deliberately a fixed set of columns rather than a key/value table: this is one
+ * specific form, and the whole value of it is that every field has a known name, a
+ * known place on the page and a known place in the arithmetic. A generic
+ * key/value store would make the form rebuild itself from whatever rows happened
+ * to be saved.
+ *
+ * Separate from `budgets` on purpose. `budgets` measures what actually happened to
+ * real transactions; this is what the user *intends*, and nothing reconciles the
+ * two. Keeping them apart is what stops one from quietly overwriting the other.
+ *
+ * Every amount is stored as a positive magnitude. The spreadsheet holds its
+ * deductions as negative numbers and subtracts them, which means a total is a sum
+ * of mixed signs and a typo there inverts the whole sheet. Positives plus explicit
+ * subtraction cannot do that, and the form can display a deduction as a deduction
+ * without carrying the sign twice.
+ */
+export const budgetWorksheet = pgTable(
+  "budget_worksheet",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Solve gross pay backwards from the bills instead of taking it as given.
+     *
+     * Opt-in, and false by default, because on the sheet this came from it cannot
+     * reproduce the figures in it. Solving off the bills gives a salary far below
+     * the deductions taken out of it - $238 a month against $2,611 withheld - so
+     * take-home comes out thousands negative. The same worksheet with the salary
+     * typed produces a take-home within a few dollars of what the bank actually
+     * recorded, which is the tie that says which half is the real one.
+     *
+     * Kept because it is the right tool for the job the sheet was originally built
+     * for: deciding what gross a target set of bills requires.
+     */
+    deriveGross: boolean("derive_gross").notNull().default(false),
+
+    /** Annual gross, before any deductions. Used when `deriveGross` is false. */
+    grossSalary: numeric("gross_salary", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    /**
+     * Share of total compensation taken as stock, which is why gross has to be
+     * grossed up. The sheet solves `gross = bills + 12% of gross`, i.e. it is
+     * already inside the gross figure.
+     */
+    asopRate: numeric("asop_rate", { precision: 6, scale: 4 })
+      .notNull()
+      .default("0.12"),
+
+    // --- Withholdings, per semi-monthly pay period, doubled in the maths -----
+    federalWithholding: numeric("federal_withholding", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    federalMedEe: numeric("federal_med_ee", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    federalOasdiEe: numeric("federal_oasdi_ee", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    stateWithholding: numeric("state_withholding", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+
+    // --- Pre-tax deductions, per semi-monthly pay period --------------------
+    k401k: numeric("k401k", { precision: 12, scale: 2 }).notNull().default("0"),
+    vision: numeric("vision", { precision: 12, scale: 2 }).notNull().default("0"),
+    dental: numeric("dental", { precision: 12, scale: 2 }).notNull().default("0"),
+    hsa: numeric("hsa", { precision: 12, scale: 2 }).notNull().default("0"),
+    medical: numeric("medical", { precision: 12, scale: 2 }).notNull().default("0"),
+
+    /** After-tax, per pay period. */
+    rothIra: numeric("roth_ira", { precision: 12, scale: 2 }).notNull().default("0"),
+
+    /**
+     * Pay periods in an average month, i.e. how many times a per-period figure
+     * repeats to make a monthly one.
+     *
+     * Default 26/12 rather than a flat 2, because biweekly pay is the norm in the
+     * US and a flat 2 models only 24 periods a year - two short. On real figures
+     * that understates a year's withholding by about 7.7% and overstates monthly
+     * take-home by the same, which is enough to make a plan look affordable that is
+     * not. Checked against what this app has actually recorded: 26/12 lands within
+     * $24 a month, a flat 2 is off by $241.
+     *
+     * Set this to 2 for genuine semi-monthly pay (the 1st and 15th, 24 a year),
+     * which is what the spreadsheet this came from assumed.
+     *
+     * Stored at four decimal places, so 26/12 comes back as 2.1667. The 0.00003
+     * error is worth roughly four cents a month of take-home - kept deliberately
+     * rather than chased, since no decimal column holds that ratio exactly and
+     * the alternative is storing a pay frequency as an enum and deriving the
+     * count, which is worse for a field the user may legitimately want to tune.
+     */
+    payPeriodsPerMonth: numeric("pay_periods_per_month", { precision: 6, scale: 4 })
+      .notNull()
+      .default("2.1667"),
+
+    /**
+     * Count the 401k and Roth IRA as savings in the 50/30/20 comparison.
+     *
+     * Off by default, which matches the spreadsheet: it kept retirement in its own
+     * section and counted only the goals as savings. That separation is arguably
+     * correct rather than a quirk, because the two are funded from different pots -
+     * retirement comes out of gross before you are paid, the goals come out of what
+     * reaches your account. Turning it on folds them into one savings figure,
+     * which is the more common reading of the rule.
+     */
+    includeRetirementInSavings: boolean("include_retirement_in_savings")
+      .notNull()
+      .default(false),
+
+    // --- Needs: monthly ----------------------------------------------------
+    rent: numeric("rent", { precision: 12, scale: 2 }).notNull().default("0"),
+    utilities: numeric("utilities", { precision: 12, scale: 2 }).notNull().default("0"),
+    wifi: numeric("wifi", { precision: 12, scale: 2 }).notNull().default("0"),
+    rentersInsurance: numeric("renters_insurance", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    carPayment: numeric("car_payment", { precision: 12, scale: 2 }).notNull().default("0"),
+    carInsurance: numeric("car_insurance", { precision: 12, scale: 2 }).notNull().default("0"),
+    gas: numeric("gas", { precision: 12, scale: 2 }).notNull().default("0"),
+    groceriesDining: numeric("groceries_dining", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+
+    // --- Financial goals: monthly ------------------------------------------
+    studentLoans: numeric("student_loans", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    brokerage: numeric("brokerage", { precision: 12, scale: 2 }).notNull().default("0"),
+    hysa: numeric("hysa", { precision: 12, scale: 2 }).notNull().default("0"),
+
+    // --- The 50/30/20 targets ------------------------------------------------
+    idealNeeds: numeric("ideal_needs", { precision: 6, scale: 4 })
+      .notNull()
+      .default("0.5"),
+    idealSavings: numeric("ideal_savings", { precision: 6, scale: 4 })
+      .notNull()
+      .default("0.3"),
+    idealWants: numeric("ideal_wants", { precision: 6, scale: 4 })
+      .notNull()
+      .default("0.2"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // One worksheet per user: this is a single standing plan, not a per-month
+    // record, so a user row would be ambiguous about which one is current.
+    uniqueIndex("budget_worksheet_user_id_key").on(t.userId),
+  ],
+);
+
+export type BudgetWorksheet = typeof budgetWorksheet.$inferSelect;
+
 export type Account = typeof accounts.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type Budget = typeof budgets.$inferSelect;

@@ -10,6 +10,7 @@ import {
   humanizeCategory,
   parseCurrencyInput,
 } from "@/lib/format";
+import { selectAllProps } from "@/lib/select-all";
 
 export type BudgetRow = {
   id: number;
@@ -543,6 +544,7 @@ function NewBucketForm({
         <label className="block min-w-48 flex-1">
           <span className="mb-1 block text-xs text-neutral-500">Name</span>
           <input
+            {...selectAllProps}
             value={name}
             disabled={disabled}
             onChange={(event) => setName(event.target.value)}
@@ -706,6 +708,7 @@ function RowEditor({
       </div>
 
       <input
+        {...selectAllProps}
         value={text}
         disabled={disabled}
         inputMode="decimal"

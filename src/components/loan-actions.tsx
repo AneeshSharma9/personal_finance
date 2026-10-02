@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { selectAllProps } from "@/lib/select-all";
+
 /**
  * The destructive and correcting actions for one loan.
  *
@@ -90,6 +92,7 @@ export function LoanActions({
         {editingBalance ? (
           <span className="inline-flex items-center gap-1">
             <input
+              {...selectAllProps}
               value={balanceInput}
               onChange={(event) => setBalanceInput(event.target.value)}
               inputMode="decimal"

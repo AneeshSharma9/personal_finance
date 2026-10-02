@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
 import { Toast } from "@/components/toast";
+import { selectAllProps } from "@/lib/select-all";
 
 /**
  * Rules for buckets and loans.
@@ -326,6 +327,7 @@ export function RulesEditor({
               </select>
             ) : (
               <input
+                {...selectAllProps}
                 value={matchValue}
                 onChange={(event) => setMatchValue(event.target.value)}
                 placeholder={matchType === "amount" ? "453.91" : "KFC"}

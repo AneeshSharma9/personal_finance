@@ -6,6 +6,10 @@ import { cache } from "react";
 import { db, tables, toNumber } from "@/db";
 import { isCatchAll } from "@/lib/categories";
 import { getActualsByBucket } from "@/lib/budget-engine";
+import {
+  WORKSHEET_NUMBER_FIELDS,
+  type WorksheetInput,
+} from "@/lib/budget-worksheet";
 import { loanBalanceSeries } from "@/lib/loan-math";
 import type { SeriesPoint } from "@/lib/series";
 
@@ -708,6 +712,89 @@ export async function getLatestTransactionMonth(
   const [year, month] = row.latest.split("-").map(Number);
   if (!Number.isInteger(year) || !Number.isInteger(month)) return null;
   return { year, month: month - 1 };
+}
+
+/**
+ * The saved worksheet, or null if there isn't one yet.
+ *
+ * A single row per user, so this is one query and no aggregation. The calc is left
+ * to `computeWorksheet` rather than done here, so the page and the API can never
+ * report different figures from the same row.
+ */
+export async function getBudgetWorksheet(
+  userId: string,
+): Promise<(WorksheetInput & { id: number }) | null> {
+  const row = await db.query.budgetWorksheet.findFirst({
+    where: eq(tables.budgetWorksheet.userId, userId),
+  });
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    deriveGross: row.deriveGross,
+    grossSalary: toNumber(row.grossSalary),
+    asopRate: toNumber(row.asopRate),
+    federalWithholding: toNumber(row.federalWithholding),
+    federalMedEe: toNumber(row.federalMedEe),
+    federalOasdiEe: toNumber(row.federalOasdiEe),
+    stateWithholding: toNumber(row.stateWithholding),
+    k401k: toNumber(row.k401k),
+    vision: toNumber(row.vision),
+    dental: toNumber(row.dental),
+    hsa: toNumber(row.hsa),
+    medical: toNumber(row.medical),
+    rothIra: toNumber(row.rothIra),
+    payPeriodsPerMonth: toNumber(row.payPeriodsPerMonth),
+    includeRetirementInSavings: row.includeRetirementInSavings,
+    rent: toNumber(row.rent),
+    utilities: toNumber(row.utilities),
+    wifi: toNumber(row.wifi),
+    rentersInsurance: toNumber(row.rentersInsurance),
+    carPayment: toNumber(row.carPayment),
+    carInsurance: toNumber(row.carInsurance),
+    gas: toNumber(row.gas),
+    groceriesDining: toNumber(row.groceriesDining),
+    studentLoans: toNumber(row.studentLoans),
+    brokerage: toNumber(row.brokerage),
+    hysa: toNumber(row.hysa),
+    idealNeeds: toNumber(row.idealNeeds),
+    idealSavings: toNumber(row.idealSavings),
+    idealWants: toNumber(row.idealWants),
+  };
+}
+
+/**
+ * Create or replace the worksheet.
+ *
+ * An upsert rather than insert-or-409: this is one standing plan with one owner,
+ * and making the client work out whether it is creating or updating is a way to
+ * lose someone's numbers on the second save.
+ */
+export async function saveBudgetWorksheet(
+  userId: string,
+  input: WorksheetInput,
+): Promise<void> {
+  /*
+   * Keyed by the table's field names, not the SQL column names. Drizzle maps
+   * `grossSalary` to `gross_salary` itself; handing it `gross_salary` instead is
+   * silently ignored rather than rejected, so half the form saves and half of it
+   * quietly becomes zero - and the fields that look identical in both
+   * (`k401k`, `rent`, `gas`, `hysa`) are the only ones that appear to work.
+   */
+  const row = {
+    userId,
+    deriveGross: input.deriveGross,
+    ...Object.fromEntries(
+      WORKSHEET_NUMBER_FIELDS.map((field) => [field, String(input[field])]),
+    ),
+    updatedAt: new Date(),
+  };
+
+  await db
+    .insert(tables.budgetWorksheet)
+    .values(row)
+    .onConflictDoUpdate({ target: tables.budgetWorksheet.userId, set: row });
 }
 
 export type CashFlowBucket = {

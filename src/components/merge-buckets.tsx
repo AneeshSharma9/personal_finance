@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
 import { Toast } from "@/components/toast";
+import { selectAllProps } from "@/lib/select-all";
 
 /**
  * Combine several buckets into one.
@@ -153,6 +154,7 @@ export function MergeBuckets({
                   onChange={() => setMode("new")}
                 />
                 <input
+                  {...selectAllProps}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Dining & Drinks"
@@ -160,6 +162,7 @@ export function MergeBuckets({
                   className="flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 />
                 <input
+                  {...selectAllProps}
                   value={limit}
                   onChange={(event) => setLimit(event.target.value)}
                   placeholder="0"

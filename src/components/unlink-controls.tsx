@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { selectAllProps } from "@/lib/select-all";
+
 /**
  * Destructive-action confirmation for unlinking.
  *
@@ -249,6 +251,7 @@ export function UnlinkButton({
             Type <strong>{label}</strong> to confirm
           </span>
           <input
+            {...selectAllProps}
             value={confirmText}
             onChange={(event) => setConfirmText(event.target.value)}
             autoComplete="off"

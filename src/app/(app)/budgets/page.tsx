@@ -107,15 +107,42 @@ export default async function BudgetsPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Budgets</h1>
-        <p className="text-sm text-neutral-500">
-          {new Date(Date.UTC(year, month, 1)).toLocaleDateString("en-US", {
-            month: "long",
-            year: "numeric",
-            timeZone: "UTC",
-          })}
-        </p>
+      {/*
+        The two sibling views sit in the header rather than partway down the page.
+        They were floating between the summary and the grid, where they read as a
+        caption to the summary instead of navigation - and a right-aligned pair with
+        nothing to their left has no obvious owner.
+      */}
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Budgets</h1>
+          <p className="text-sm text-neutral-500">
+            {new Date(Date.UTC(year, month, 1)).toLocaleDateString("en-US", {
+              month: "long",
+              year: "numeric",
+              timeZone: "UTC",
+            })}
+          </p>
+        </div>
+        {/*
+          Each answers a different question from the grid below, so each has its own
+          page. The worksheet is the plan; the cash flow is what happened - which is
+          why only that one carries the selected month across.
+        */}
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/budgets/worksheet"
+            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Budget worksheet
+          </Link>
+          <Link
+            href={`/budgets/cash-flow?scope=month&year=${year}&month=${month + 1}`}
+            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Cash flow
+          </Link>
+        </div>
       </header>
 
       <MonthStrip
@@ -131,20 +158,11 @@ export default async function BudgetsPage({
       <BudgetSummary totals={summary} />
 
       {/*
-        Cash flow answers a different question from the budget grid below, so it
-        gets its own page rather than another card here: the same month, but as a
-        Sankey of income against what it was spent on. Carries the month across so
-        the two views line up on what they are describing.
+        Both of these answer a different question from the grid below, so each gets
+        its own page rather than another card here. The worksheet is the plan you
+        made; the cash flow is what happened, for this month - which is why only
+        the cash flow link carries the month across.
       */}
-      <div className="flex justify-end">
-        <Link
-          href={`/budgets/cash-flow?scope=month&year=${year}&month=${month + 1}`}
-          className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >
-          Cash flow
-        </Link>
-      </div>
-
       <BudgetEditor
         basics={basics}
         categories={spending}

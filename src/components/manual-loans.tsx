@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { selectAllProps } from "@/lib/select-all";
 
 /**
  * Manual loans section for /accounts.
@@ -175,6 +176,7 @@ function LoanForm({
       <div className="grid gap-2 sm:grid-cols-2">
         <Field label="Name">
           <input
+            {...selectAllProps}
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Car loan"
@@ -198,6 +200,7 @@ function LoanForm({
         </Field>
         <Field label="Amount borrowed">
           <input
+            {...selectAllProps}
             value={principal}
             onChange={(event) => setPrincipal(event.target.value)}
             placeholder="25000"
@@ -208,6 +211,7 @@ function LoanForm({
         </Field>
         <Field label="APR (%)">
           <input
+            {...selectAllProps}
             value={apr}
             onChange={(event) => setApr(event.target.value)}
             placeholder="5.9"
@@ -217,6 +221,7 @@ function LoanForm({
         </Field>
         <Field label="Monthly payment (optional)">
           <input
+            {...selectAllProps}
             value={payment}
             onChange={(event) => setPayment(event.target.value)}
             placeholder="600"
