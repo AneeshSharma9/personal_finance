@@ -221,12 +221,25 @@ export async function applyLoanRuleToHistory(
     const amount = toNumber(row.amount);
     if (!matchesStoredRule({ ...row, amount }, rule)) continue;
 
+    /*
+     * Counted as matched BEFORE the two exclusions below, matching the bucket
+     * and ignore paths.
+     *
+     * It used to be counted after, which meant a second run over a rule that had
+     * already recorded its payments reported "matched 0" - indistinguishable
+     * from a rule that matches nothing. `matched` answers "how many does this
+     * rule describe"; `moved` answers "how many just changed".
+     */
+    matched += 1;
+
     // A loan payment is money out. Plaid signs are positive for outflow, so an
     // inflow matching the rule is left alone rather than silently flipped.
     if (amount <= 0) continue;
+
+    // Already recorded: loan_payments.transaction_id is unique, so re-inserting
+    // would fail. Counted as matched, not moved.
     if (already.has(row.id)) continue;
 
-    matched += 1;
     try {
       await recordLoanPayment({
         loanId: rule.loanId,

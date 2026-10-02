@@ -13,6 +13,7 @@ import {
 } from "@/lib/queries";
 import { BudgetEditor } from "@/components/budget-editor";
 import { BudgetSummary } from "@/components/budget-summary";
+import { MergeBuckets } from "@/components/merge-buckets";
 import { MonthStrip } from "@/components/month-strip";
 
 export const metadata: Metadata = { title: "Budgets · Finance" };
@@ -146,6 +147,14 @@ export default async function BudgetsPage({
           categoriesActual: sumActual(spending),
           earningsActual: sumActual(earnings),
         }}
+      />
+
+      <MergeBuckets
+        buckets={[
+          ...basics.map((row) => ({ id: row.id, name: row.name, kind: "basic" })),
+          ...spending.map((row) => ({ id: row.id, name: row.name, kind: "category" })),
+          ...earnings.map((row) => ({ id: row.id, name: row.name, kind: "earning" })),
+        ]}
       />
 
       {/*
