@@ -95,7 +95,9 @@ export function TrendChart({
   // One point means change 0, which is not "flat" - it is "no comparison yet".
   const rose = change > 0;
   const good = rose === risingIsGood;
-  const stroke = single ? "#6b7bf7" : good ? "#22c55e" : "#ef4444";
+  // Tailwind 400 rather than 500: calmer against the neutral cards, and legible
+  // in both themes without a dark-mode variant.
+  const stroke = single ? "#818cf8" : good ? "#4ade80" : "#f87171";
 
   const active = activeIndex === null ? null : points[activeIndex];
   const activeDate = activeIndex === null ? null : dates[activeIndex];

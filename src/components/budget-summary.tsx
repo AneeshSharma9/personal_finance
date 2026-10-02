@@ -97,13 +97,15 @@ function Ring({
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
 
+  // Tailwind 400 shades, matching the rest of the charts. The greys are the
+  // empty-track colours and are unrelated to that.
   const color = !hasBudget
     ? "#d4d4d4"
     : overspent
-      ? "#ef4444"
+      ? "#f87171"
       : fraction > 0.9
-        ? "#f59e0b"
-        : "#6b7bf7";
+        ? "#fbbf24"
+        : "#818cf8";
 
   return (
     <svg
