@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
@@ -212,9 +213,24 @@ export default async function AccountsPage() {
                     {account.institutionName ?? "Unknown institution"}
                     {account.mask ? ` ····${account.mask}` : ""}
                     {account.subtype ? ` · ${humanize(account.subtype)}` : ""}
-                    {transactionCounts.get(account.id)
-                      ? ` · ${transactionCounts.get(account.id)} transactions`
-                      : ""}
+                    {/*
+                      The count is a link, not a label. It was the one number on
+                      the page with no way to act on it - "1,204 transactions" is
+                      a question ("which ones?"), and the transactions page could
+                      already filter by account, it just had no control for it.
+                      Zero is left as plain text because there is nothing to open.
+                    */}
+                    {transactionCounts.get(account.id) ? (
+                      <>
+                        {" · "}
+                        <Link
+                          href={`/transactions?accountId=${account.id}`}
+                          className="underline underline-offset-2"
+                        >
+                          {transactionCounts.get(account.id)} transactions
+                        </Link>
+                      </>
+                    ) : null}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

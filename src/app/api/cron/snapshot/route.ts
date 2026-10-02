@@ -40,8 +40,10 @@ export async function GET(request: Request) {
     return Response.json({ error: "No allowed users found." }, { status: 404 });
   }
 
-  // One snapshot per day: re-running the cron updates the same row instead of
-  // adding a duplicate (the unique index on user_id + snapshot_date).
+  /*
+   * One snapshot per day: re-running the cron updates the same row instead of
+   * adding a duplicate (the unique index on user_id + snapshot_date).
+   */
   const snapshotDate = todayUtc();
 
   const results = [];
@@ -52,36 +54,41 @@ export async function GET(request: Request) {
       getLiabilityCount(user.id),
     ]);
 
+    const assetsTotal = breakdown.assets.toFixed(4);
+    const liabilitiesTotal = breakdown.liabilities.toFixed(4);
+    const netWorth = breakdown.netWorth.toFixed(4);
+    const breakdownJson = {
+      cash: breakdown.cash,
+      other: breakdown.other,
+      investments: breakdown.investments,
+      creditCards: breakdown.creditCards,
+      loans: breakdown.loans,
+      manualAssets: breakdown.manualAssets,
+      manualLiabilities: breakdown.manualLiabilities,
+      accountCount,
+      liabilityCount,
+    };
+
     await db
       .insert(tables.netWorthSnapshots)
       .values({
         userId: user.id,
         snapshotDate,
-        assetsTotal: breakdown.assets.toFixed(4),
-        liabilitiesTotal: breakdown.liabilities.toFixed(4),
-        netWorth: breakdown.netWorth.toFixed(4),
-        breakdownJson: {
-          cash: breakdown.cash,
-          other: breakdown.other,
-          investments: breakdown.investments,
-          creditCards: breakdown.creditCards,
-          loans: breakdown.loans,
-          manualAssets: breakdown.manualAssets,
-          manualLiabilities: breakdown.manualLiabilities,
-          accountCount,
-          liabilityCount,
-        },
+        assetsTotal,
+        liabilitiesTotal,
+        netWorth,
+        breakdownJson,
       })
       .onConflictDoUpdate({
         target: [
           tables.netWorthSnapshots.userId,
           tables.netWorthSnapshots.snapshotDate,
         ],
-        set: {
-          assetsTotal: breakdown.assets.toFixed(4),
-          liabilitiesTotal: breakdown.liabilities.toFixed(4),
-          netWorth: breakdown.netWorth.toFixed(4),
-        },
+        // The breakdown belongs in the update too. It was left out, so a second
+        // run on the same day refreshed the three totals while the stored
+        // breakdown kept describing the morning's numbers - an account linked
+        // after the first run left accountCount stale for the rest of the day.
+        set: { assetsTotal, liabilitiesTotal, netWorth, breakdownJson },
       });
 
     results.push({ userId: user.id, netWorth: breakdown.netWorth });

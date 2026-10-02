@@ -38,6 +38,70 @@ export function formatPercent(value: number, decimals = 2): string {
 }
 
 /**
+ * Format what someone is typing into a money field.
+ *
+ * The budgeted column is an `<input>`, not a text label, so it has to be
+ * re-renderable on every keystroke - which rules out the usual "format on blur,
+ * strip on focus" dance that loses the caret. So this runs on each change and
+ * has to be idempotent, or typing "1" then "5" would fight the cursor.
+ *
+ * Two details make it feel right rather than merely correct:
+ *
+ *  - A trailing "." survives, so "1550." stays "1550." and the decimal point can
+ *    be followed by digits. Dropping it makes decimals untypable.
+ *  - Fractional digits are neither padded nor truncated while typing: "1550.5"
+ *    stays "1,550.5" instead of jumping to "1,550.50", which would move the caret
+ *    out from under the user.
+ *
+ * Rejects anything that is not a digit or a dot, so a pasted "$1,2,3.00" settles
+ * rather than being rejected.
+ */
+export function formatCurrencyInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  if (cleaned === "") return "";
+
+  const firstDot = cleaned.indexOf(".");
+  const hasDot = firstDot !== -1;
+  const whole = hasDot ? cleaned.slice(0, firstDot) : cleaned;
+  const rest = hasDot ? cleaned.slice(firstDot + 1) : "";
+  // Extra dots are dropped rather than nested, so "1.2.3" reads as "1.23".
+  const fraction = rest.replace(/\./g, "");
+
+  // Leading zeros go away here too, so "0" then "5" cannot leave "05".
+  const groupedWhole =
+    whole === "" ? "0" : Number(whole).toLocaleString("en-US");
+
+  /*
+   * "There is a dot but nothing after it" and "there is no dot" look identical
+   * from `fraction` alone, and collapsing them drops the point the user just
+   * typed - which makes decimals untypable, because the "." vanishes before any
+   * digit can follow it.
+   */
+  const body =
+    fraction !== ""
+      ? `${groupedWhole}.${fraction}`
+      : hasDot
+        ? `${groupedWhole}.`
+        : groupedWhole;
+
+  return `$${body}`;
+}
+
+/**
+ * Read a money field back to a number, or null when there is nothing there.
+ *
+ * Null rather than 0 for an empty field: "cleared the box" and "set it to zero"
+ * are different intentions, and saving 0 for the first would wipe a real budget.
+ */
+export function parseCurrencyInput(raw: string): number | null {
+  const cleaned = raw.replace(/[^0-9.-]/g, "");
+  if (cleaned === "" || /^[-.]+$/.test(cleaned)) return null;
+
+  const value = Number(cleaned);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
  * Format a transaction date. Transactions are date-only in Plaid (no time), so
  * "Jan 5" is enough; the year is shown only when it differs from today.
  */

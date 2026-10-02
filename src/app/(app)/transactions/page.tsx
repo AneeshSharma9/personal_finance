@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { CategoryEditor } from "@/components/category-editor";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { getCategories, getTransactions } from "@/lib/queries";
+import { getAccounts, getCategories, getTransactions } from "@/lib/queries";
 
 export const metadata: Metadata = { title: "Transactions · Finance" };
 
@@ -30,7 +30,7 @@ export default async function TransactionsPage({
       Number.parseInt(singleParam(params.page) ?? "1", 10) || 1,
     );
 
-  const [{ rows, total }, categories] = await Promise.all([
+  const [{ rows, total }, categories, accounts] = await Promise.all([
     getTransactions(user.id, {
       category,
       search,
@@ -39,8 +39,14 @@ export default async function TransactionsPage({
       offset: (page - 1) * PAGE_SIZE,
     }),
     getCategories(user.id),
+    getAccounts(user.id),
   ]);
 
+  // A filter naming an account that is not the user's, or that no longer exists,
+  // renders as "All accounts" rather than silently listing everything.
+  const account = Number.isInteger(accountId)
+    ? accounts.find((row) => row.id === accountId)
+    : undefined;
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -51,6 +57,7 @@ export default async function TransactionsPage({
         <p className="text-sm text-neutral-500">
           {total.toLocaleString("en-US")} transaction
           {total === 1 ? "" : "s"}
+          {account ? ` in ${account.name}` : ""}
           {category ? ` in ${category}` : ""}
           {search ? ` matching "${search}"` : ""}
         </p>
@@ -88,12 +95,51 @@ export default async function TransactionsPage({
           </select>
         </label>
 
+        {/*
+          The account filter. The accounts page links here with accountId already
+          set, which is why the query already supported it - only the control was
+          missing.
+        */}
+        <label className="basis-40">
+          <span className="mb-1 block text-xs text-neutral-500">Account</span>
+          <select
+            name="accountId"
+            defaultValue={account ? String(account.id) : ""}
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+          >
+            <option value="">All accounts</option>
+            {accounts.map((row) => (
+              <option key={row.id} value={row.id}>
+                {/* Institution in the label: two banks can both have a
+                    "Checking" and the filter is useless if they are
+                    indistinguishable. */}
+                {row.name}
+                {row.institutionName ? ` · ${row.institutionName}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button
           type="submit"
           className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
         >
           Apply
         </button>
+
+        {/*
+          Every filter is a GET field, so submitting re-runs the search from page
+          one. Carrying ?page= would land on an out-of-range page whenever the
+          filtered result set is smaller than the current one.
+        */}
+        {category || search || account ? (
+          <a
+            href="/transactions"
+            className="rounded-md px-2 py-2 text-sm underline"
+          >
+            Clear
+          </a>
+        ) : null}
       </form>
 
       {rows.length === 0 ? (
@@ -144,7 +190,7 @@ export default async function TransactionsPage({
         <nav className="flex items-center justify-between text-sm">
           {page > 1 ? (
             <a
-              href={buildHref({ q: search, category, page: page - 1 })}
+              href={buildHref({ q: search, category, accountId: account?.id, page: page - 1 })}
               className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700"
             >
               Previous
@@ -157,7 +203,7 @@ export default async function TransactionsPage({
           </span>
           {page < pageCount ? (
             <a
-              href={buildHref({ q: search, category, page: page + 1 })}
+              href={buildHref({ q: search, category, accountId: account?.id, page: page + 1 })}
               className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700"
             >
               Next
@@ -171,18 +217,28 @@ export default async function TransactionsPage({
   );
 }
 
+/**
+ * Pagination has to carry every filter, not just some of them.
+ *
+ * It carried only the search and the category, so paging a filtered-by-account
+ * list silently dropped the account and showed a different set of transactions
+ * on page 2 - with the count in the header still describing the filtered one.
+ */
 function buildHref({
   q,
   category,
+  accountId,
   page,
 }: {
   q?: string;
   category?: string;
+  accountId?: number;
   page: number;
 }): string {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (category) params.set("category", category);
+  if (accountId !== undefined) params.set("accountId", String(accountId));
   params.set("page", String(page));
   return `/transactions?${params.toString()}`;
 }

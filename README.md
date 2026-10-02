@@ -130,6 +130,15 @@ The daily snapshot cron is already configured in `vercel.json`
 (`0 12 * * *`, i.e. 08:00 America/New_York). Vercel sends
 `Authorization: Bearer $CRON_SECRET` automatically when that variable is set.
 
+`0 12 * * *` means **"sometime in the 12:00 hour"**, not "at 12:00:00". On the
+Hobby plan Vercel may invoke a cron job at any point within the specified hour, to
+spread load across accounts — so `0 12 * * *` fires somewhere between 12:00:00
+and 12:59:59 UTC. Pro and Enterprise are invoked within the minute specified.
+Vercel's own docs are explicit that cron delivery is best effort: a run may be
+skipped entirely on a transient network error, and the same run may occasionally be
+delivered twice. This app is already idempotent (a unique index on
+`user_id + snapshot_date` plus an upsert), which is exactly what that requires.
+
 Vercel cron schedules are always UTC and cannot name a timezone, so this cannot
 stay at 08:00 ET across a DST change. **On 1 November 2026** New York leaves
 EDT (UTC-4) for EST (UTC-5) and the job will start firing at 07:00 local.
@@ -222,6 +231,28 @@ If the Plaid revocation call fails, local rows are still removed — orphaned da
 you asked to delete is worse than a stale Item — and the response points at the
 Plaid Dashboard.
 
+Each account's **N transactions** is a link to `/transactions?accountId=<id>`.
+It was the one figure on the page with no way to act on it — "1,204 transactions"
+is a question — and the transactions page could already filter by account, it just
+had no control for it. Zero stays plain text, because there is nothing to open.
+
+## Transactions
+
+`/transactions` filters by search text, category and **account**, all in
+`searchParams` so they survive a refresh and can be shared as a link. Account
+options carry the institution name too, because two banks can both have a
+"Checking" and the filter is useless if they are indistinguishable.
+
+Pagination carries every filter, not just some of them. It used to pass the
+search and the category but drop the account, so paging a filtered list silently
+showed a different set of transactions on page 2 while the count in the header
+still described the filtered one.
+
+`accountId` is re-checked against the caller's own accounts in `getTransactions`,
+so a crafted id cannot widen the scope — it returns nothing. A filter naming an
+account that isn't yours, or that no longer exists, renders as "All accounts"
+rather than quietly listing everything.
+
 ## Budgets
 
 Modelled on Rocket Money's layout: **Budget Basics** (automatic bills, utilities,
@@ -286,6 +317,31 @@ selected month defaults to the newest month *with data* — otherwise the curren
 month would never appear whenever the two differ.
 
 A **Year** dropdown covers the years that actually have transactions.
+
+### Reading the numbers
+
+The **Budgeted** column is a money field, not a text label: it formats to
+`$1,550` as you type, via `formatCurrencyInput` in `src/lib/format.ts`. Two
+details make that usable rather than merely correct, and both are load-bearing:
+
+- The format runs on **every keystroke**, so it has to be idempotent — feeding
+  its own output back in is a fixed point. The usual "format on blur, strip on
+  focus" trick cannot be used here because it loses the caret.
+- A trailing `.` survives. Dropping it makes decimals untypable: the point
+  vanishes before any digit can follow it. Fractional digits are also neither
+  padded nor truncated while typing, so "1550.5" stays `$1,550.5` rather than
+  jumping to `$1,550.50` and moving the caret.
+
+`parseCurrencyInput` returns `null` for an empty field rather than `0`. Clearing
+the box and typing zero are different intentions, and conflating them wipes a
+real budget on blur.
+
+Colour follows the row's group, not the arithmetic. Over budget is red for
+spending and **green for income** — exceeding the target on the earnings row is
+the point, and it used to render the same red as overspending. The **Spending
+Budget** footer turns red when the month's actual passes the total budgeted,
+which is the one figure that says whether the month worked; it was previously the
+same muted grey at 40% and at 140%.
 
 ### Automatic assignment
 
@@ -584,12 +640,45 @@ Arithmetic lives in `src/lib/loan-math.ts` as pure functions, tested in
 Assets minus liabilities across checking/savings, credit cards, loans,
 investments and manual accounts. Manual loans are counted under `loans` rather
 than `manualLiabilities`, so a car loan appears there whether or not Plaid can see
-it. `GET /api/cron/snapshot` writes one row per user per day, idempotently,
-guarded by `CRON_SECRET`:
+it.
+
+### History needs two days to exist
+
+`GET /api/cron/snapshot` writes one row per user per day, idempotently, guarded
+by `CRON_SECRET`:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/snapshot
 ```
+
+**When it runs: 12:00 UTC daily, via Vercel Cron** (`vercel.json`). Nothing in
+the repo invokes it on a schedule, so `npm run dev` never fires it — locally the
+curl above is the only trigger. If the app has never been deployed, or
+`CRON_SECRET` is unset in the Vercel project, the endpoint returns 500 and no
+row is ever written.
+
+**"0 12 * * *" does not mean 12:00:00.** On the Hobby plan Vercel invokes a cron
+job *at any point within the specified hour* to spread load across accounts, so
+`0 12 * * *` can fire anywhere from 12:00:00 to 12:59:59 UTC. Pro and Enterprise
+get the minute specified. So a snapshot landing at 12:34 is documented behaviour,
+not a misconfiguration — and worth remembering before treating a snapshot's
+timestamp as precise.
+
+The chart draws from a **single** snapshot, as a centred marker with no line and
+no fill, and says so underneath. One point is one point, and a line through it
+would imply a direction the data does not contain. With two or more it renders
+normally. Nothing to show at all is a separate case, and only that one is worth
+treating as a fault: Plaid reports current balances only, so there is nothing to
+backfill and a single day is genuinely one point.
+
+Two things about the history query that are easy to get wrong:
+
+- `getNetWorthHistory` orders **descending** for its `limit`, then reverses.
+  Ascending order with `limit: 365` returns the *oldest* 365 rows, which would pin
+  the chart to the first year and stop it ever advancing.
+- The snapshot upsert refreshes `breakdown_json` as well as the totals. It used
+  to leave the breakdown from the day's first run, so an account linked later left
+  `accountCount` stale until midnight.
 
 ## Webhooks
 

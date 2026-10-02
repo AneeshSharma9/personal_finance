@@ -46,17 +46,26 @@ export default async function NetWorthPage() {
 
       <section>
         <h2 className="mb-2 text-sm font-medium text-neutral-500">History</h2>
-        {history.length < 2 ? (
+        {history.length === 0 ? (
           <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
             History builds one point per day. Plaid only reports current
             balances, so there is nothing to backfill.
           </p>
         ) : (
           <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+            {/*
+              One snapshot is enough to render. The chart draws it as a lone
+              marker, because a line through a single point would imply a
+              direction the data does not contain - but showing nothing at all
+              for the first day read as a broken feature.
+            */}
             <NetWorthChart points={history} />
             <p className="mt-2 text-xs text-neutral-500">
-              {history.length} daily snapshots, {formatDate(history[0].date)} to{" "}
-              {formatDate(history[history.length - 1].date)}.
+              {history.length === 1
+                ? `1 daily snapshot, ${formatDate(history[0].date)}.`
+                : `${history.length} daily snapshots, ${formatDate(history[0].date)} to ${formatDate(
+                    history[history.length - 1].date,
+                  )}.`}
             </p>
           </div>
         )}

@@ -1218,11 +1218,20 @@ export async function getNetWorthHistory(
 ): Promise<NetWorthPoint[]> {
   const rows = await db.query.netWorthSnapshots.findMany({
     where: eq(tables.netWorthSnapshots.userId, userId),
-    orderBy: (s, { asc }) => [asc(s.snapshotDate)],
+    /*
+     * Newest first for the LIMIT, then flipped below.
+     *
+     * Ascending order with `limit: days` returns the OLDEST 365 rows, so once a
+     * year of daily snapshots existed the chart would be pinned to the first
+     * year forever and stop advancing - the exact opposite of what a history is
+     * for. Ordering descending and reversing afterwards keeps the chart's
+     * chronological order while making the window mean "the last N days".
+     */
+    orderBy: (s, { desc }) => [desc(s.snapshotDate)],
     limit: days,
   });
 
-  return rows.map((r) => ({
+  return rows.reverse().map((r) => ({
     date: r.snapshotDate,
     assets: toNumber(r.assetsTotal),
     liabilities: toNumber(r.liabilitiesTotal),

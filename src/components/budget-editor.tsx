@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { formatCurrency, humanizeCategory } from "@/lib/format";
+import {
+  formatCurrency,
+  formatCurrencyInput,
+  humanizeCategory,
+  parseCurrencyInput,
+} from "@/lib/format";
 
 export type BudgetRow = {
   id: number;
@@ -138,6 +143,9 @@ export function BudgetEditor({
   );
   const earningOptions = options.filter(isIncomeCategory);
 
+  const spendingActual = totals.basicsActual + totals.categoriesActual;
+  const overSpending = spendingActual > totals.spendingBudget;
+
   return (
     <div className="space-y-8">
       {error ? (
@@ -202,12 +210,31 @@ export function BudgetEditor({
         onDelete={deleteBudget}
       />
 
-      <div className="flex items-center justify-between rounded-lg border border-neutral-300 px-4 py-3 dark:border-neutral-700">
+      {/*
+        The month's verdict. The Actual turns red when spending has passed the
+        total budgeted, which is the one number on the page that says whether the
+        month worked. It did not before: the figure was rendered in the same
+        muted grey whether it was 40% or 140% of budget, so overspending had to
+        be spotted by comparing two numbers by eye.
+      */}
+      <div
+        className={`flex items-center justify-between rounded-lg border px-4 py-3 ${
+          overSpending
+            ? "border-red-300 bg-red-50/60 dark:border-red-900 dark:bg-red-950/40"
+            : "border-neutral-300 dark:border-neutral-700"
+        }`}
+      >
         <span className="font-medium">Spending Budget</span>
         <span className="flex gap-6 text-sm tabular-nums">
           <span>{formatCurrency(totals.spendingBudget)}</span>
-          <span className="text-neutral-500">
-            {formatCurrency(totals.basicsActual + totals.categoriesActual)}
+          <span
+            className={
+              overSpending
+                ? "font-medium text-red-700 dark:text-red-400"
+                : "text-neutral-500"
+            }
+          >
+            {formatCurrency(spendingActual)}
           </span>
         </span>
       </div>
@@ -627,15 +654,38 @@ function RowEditor({
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
 }) {
-  const [budgeted, setBudgeted] = useState(String(row.budgeted));
+  const [text, setText] = useState(() =>
+    formatCurrencyInput(String(row.budgeted)),
+  );
 
+  /*
+   * Re-seed from the server's value, but only when it actually changed.
+   *
+   * Comparing the number rather than the text is what stops this clobbering
+   * what is being typed: the formatted string for 1550 is "$1,550" whether it
+   * came from the prop or from the keyboard, so re-seeding on every render would
+   * reset the caret mid-edit.
+   */
   const [seen, setSeen] = useState(row.budgeted);
   if (seen !== row.budgeted) {
     setSeen(row.budgeted);
-    setBudgeted(String(row.budgeted));
+    setText(formatCurrencyInput(String(row.budgeted)));
   }
 
-  const over = row.percentUsed !== null && row.percentUsed > 100;
+  /*
+   * Over budget is bad news for spending and good news for income, so the colour
+   * follows the row's group rather than the arithmetic.
+   *
+   * Before this, a month where income beat its target rendered red - the same
+   * red as overspending, on the one row where exceeding the number is the point.
+   */
+  const over = row.budgeted > 0 && row.actual > row.budgeted;
+  const tone = !over ? "" : row.kind === "earning" ? "good" : "bad";
+
+  const reset = () => {
+    setSeen(row.budgeted);
+    setText(formatCurrencyInput(String(row.budgeted)));
+  };
 
   return (
     <div className="grid grid-cols-[1fr_6rem_5rem] items-center gap-2 border-b border-neutral-100 px-4 py-2 last:border-0 dark:border-neutral-800">
@@ -656,31 +706,48 @@ function RowEditor({
       </div>
 
       <input
-        value={budgeted}
+        value={text}
         disabled={disabled}
         inputMode="decimal"
         aria-label={`Budgeted for ${row.name}`}
-        onChange={(event) => setBudgeted(event.target.value)}
+        onChange={(event) => setText(formatCurrencyInput(event.target.value))}
         onBlur={(event) => {
-          const parsed = Number(event.target.value.replace(/[$,\s]/g, ""));
-          if (Number.isFinite(parsed) && parsed !== row.budgeted) {
-            onSave({
-              kind: row.kind,
-              name: row.name,
-              category: row.category,
-              budgeted: parsed,
-            });
+          const parsed = parseCurrencyInput(event.target.value);
+          // An emptied field is not a request to budget zero, so it snaps back
+          // rather than silently wiping a real figure.
+          if (parsed === null) {
+            reset();
+            return;
           }
+          if (parsed === row.budgeted) return;
+          setSeen(parsed);
+          void onSave({
+            kind: row.kind,
+            name: row.name,
+            category: row.category,
+            budgeted: parsed,
+          });
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
+          // Escape abandons the edit instead of saving a half-typed figure.
+          if (event.key === "Escape") {
+            reset();
+            event.currentTarget.blur();
+          }
         }}
         className="w-full bg-transparent text-right text-sm tabular-nums outline-none disabled:opacity-50"
       />
 
       <div className="flex items-center justify-end gap-1">
         <span
-          className={`text-sm tabular-nums ${over ? "text-red-600 dark:text-red-400" : "text-neutral-500"}`}
+          className={`text-sm tabular-nums ${
+            tone === "good"
+              ? "font-medium text-green-700 dark:text-green-400"
+              : tone === "bad"
+                ? "font-medium text-red-700 dark:text-red-400"
+                : "text-neutral-500"
+          }`}
         >
           {formatCurrency(row.actual)}
         </span>
