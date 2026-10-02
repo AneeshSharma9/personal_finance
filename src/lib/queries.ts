@@ -6,6 +6,8 @@ import { cache } from "react";
 import { db, tables, toNumber } from "@/db";
 import { isCatchAll } from "@/lib/categories";
 import { getActualsByBucket } from "@/lib/budget-engine";
+import { loanBalanceSeries } from "@/lib/loan-math";
+import type { SeriesPoint } from "@/lib/series";
 
 /**
  * Read-side queries.
@@ -1242,4 +1244,93 @@ export async function getNetWorthHistory(
 /** Escape LIKE wildcards so a search for "50%" doesn't match everything. */
 function escapeLike(input: string): string {
   return input.replace(/([\\%_])/g, "\\$1");
+}
+// ---------------------------------------------------------------------------
+// Per-account and per-loan detail pages
+// ---------------------------------------------------------------------------
+
+/**
+ * One account, scoped to its owner.
+ *
+ * Reached through the account's Item rather than by id alone, so a guessed id
+ * cannot read someone else's account. Null rather than a 403 for the same reason
+ * the pages render a "not found" panel instead of leaking existence.
+ */
+export async function getAccountForUser(
+  userId: string,
+  accountId: number,
+): Promise<AccountWithItem | null> {
+  const [row] = await db
+    .select({ account: tables.accounts, itemId: tables.items.id, institutionName: tables.items.institutionName })
+    .from(tables.accounts)
+    .innerJoin(tables.items, eq(tables.items.id, tables.accounts.itemId))
+    .where(and(eq(tables.accounts.id, accountId), eq(tables.items.userId, userId)))
+    .limit(1);
+
+  if (!row) return null;
+  return { ...row.account, institutionName: row.institutionName };
+}
+
+/**
+ * An account's recorded balance on each day the cron ran.
+ *
+ * Descending for the LIMIT then reversed, so the window means "the last N days"
+ * rather than pinning the chart to the oldest ones - see getNetWorthHistory for
+ * the same trap on the aggregate.
+ *
+ * Empty for a while after a deployment, and there is nothing to backfill: Plaid
+ * reports current balances only.
+ */
+export async function getAccountBalanceHistory(
+  userId: string,
+  accountId: number,
+  days = 365,
+): Promise<SeriesPoint[]> {
+  const account = await getAccountForUser(userId, accountId);
+  if (!account) return [];
+
+  const rows = await db.query.accountBalanceSnapshots.findMany({
+    where: eq(tables.accountBalanceSnapshots.accountId, accountId),
+    orderBy: (s, { desc }) => [desc(s.snapshotDate)],
+    limit: days,
+  });
+
+  return rows.reverse().map((row) => ({
+    date: row.snapshotDate,
+    value: toNumber(row.balance),
+  }));
+}
+
+/**
+ * A loan's balance history.
+ *
+ * Reconstructed from the payment ledger rather than read from a snapshot table,
+ * because the `loan_payments` trigger makes it exactly recoverable - see
+ * `loanBalanceSeries`. So this is complete from the first payment, with real
+ * history available immediately rather than accumulating a point a day.
+ */
+export async function getLoanBalanceHistory(
+  userId: string,
+  loanId: number,
+): Promise<SeriesPoint[]> {
+  const loan = await db.query.loans.findFirst({
+    where: and(eq(tables.loans.id, loanId), eq(tables.loans.userId, userId)),
+    columns: { openedOn: true, balance: true },
+  });
+  if (!loan) return [];
+
+  const payments = await db.query.loanPayments.findMany({
+    where: eq(tables.loanPayments.loanId, loanId),
+    columns: { paidOn: true, principal: true },
+  });
+
+  return loanBalanceSeries({
+    openedOn: loan.openedOn,
+    balance: toNumber(loan.balance),
+    payments: payments.map((payment) => ({
+      paidOn: payment.paidOn,
+      principal: toNumber(payment.principal),
+    })),
+    today: new Date().toISOString().slice(0, 10),
+  }).map((point) => ({ date: point.date, value: point.balance }));
 }

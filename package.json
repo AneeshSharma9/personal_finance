@@ -17,6 +17,13 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
+    "@visx/axis": "^4.0.0",
+    "@visx/curve": "^4.0.0",
+    "@visx/event": "^4.0.0",
+    "@visx/grid": "^4.0.0",
+    "@visx/scale": "^4.0.0",
+    "@visx/shape": "^4.0.0",
+    "@visx/tooltip": "^4.0.0",
     "drizzle-orm": "^0.45.3",
     "next": "16.3.8",
     "plaid": "^47.0.0",

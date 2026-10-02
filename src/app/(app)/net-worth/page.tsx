@@ -11,7 +11,7 @@ import {
   getNetWorthHistory,
 } from "@/lib/queries";
 import { HoldingsList } from "@/components/holdings-list";
-import { NetWorthChart } from "@/components/net-worth-chart";
+import { TrendChart } from "@/components/trend-chart";
 
 export const metadata: Metadata = { title: "Net worth · Finance" };
 
@@ -59,7 +59,15 @@ export default async function NetWorthPage() {
               direction the data does not contain - but showing nothing at all
               for the first day read as a broken feature.
             */}
-            <NetWorthChart points={history} />
+            {/* NetWorthPoint carries assets and liabilities; the chart only
+                needs the total, so it is narrowed to the common shape. */}
+            <TrendChart
+              points={history.map((point) => ({
+                date: point.date,
+                value: point.netWorth,
+              }))}
+              label="Net worth"
+            />
             <p className="mt-2 text-xs text-neutral-500">
               {history.length === 1
                 ? `1 daily snapshot, ${formatDate(history[0].date)}.`

@@ -15,7 +15,8 @@ The design and constraints this implements live in
 | Database | Postgres (Supabase) via Drizzle ORM |
 | Auth | Supabase Auth, locked to an email allowlist |
 | Plaid | `plaid` Node SDK + `react-plaid-link` |
-| Tests | `node:test` via `tsx` (38 tests) |
+| Charts | `visx` (scales, shapes, axes, tooltip) |
+| Tests | `node:test` via `tsx` (137 tests) |
 
 ## Setup
 
@@ -207,8 +208,44 @@ Vercel — see the IPv6 warning under Setup above.
 ## Accounts
 
 Institutions are listed with their own section so **Unlink** is always reachable,
-not only when an Item needs attention. Per account, **×** removes just that
-account.
+not only when an Item needs attention.
+
+Every linked account — cash, credit cards, investments, other — is a link to
+`/accounts/[id]`, and every manual loan is a link to `/loans/[id]`. The **whole row**
+is the link, in both cases. The list is navigation only; the actions moved to
+those pages.
+
+The ordering here was not cosmetic, it was load-bearing. A row cannot be both a
+link and a "remove this" button: you cannot nest a `<button>` inside an `<a>`, and
+a row-sized link swallowing a destructive control is a misclick waiting to
+happen. So the actions had to move *before* the row could become a link — which
+is why the buttons are on the detail pages and not on the list.
+
+- **× / remove** (now on `/accounts/[id]`) — `DELETE /api/accounts/:id`.
+- **N transactions** (now on `/accounts/[id]`) — links to
+  `/transactions?accountId=<id>`.
+- **Correct the balance**, **un-tag a payment**, **delete loan** (now on
+  `/loans/[id]`).
+
+**Add a loan** stays on `/accounts`, because creating is a list-level action and
+has nowhere else to belong.
+
+### Holdings, two presentations
+
+`HoldingsList` is the multi-account version for `/net-worth`: it groups positions
+by account, repeats each account's name, and totals the lot. `HoldingsTable` is
+the bare positions table, largest first, with no heading, no account name and no
+total of its own.
+
+An account's own page uses `HoldingsTable` and supplies its own heading and total.
+Using `HoldingsList` there put the word "Holdings" twice and the same figure three
+times — once as that list's grand total, once as its per-account total, once as
+the single row underneath, with the account's name repeated as well.
+
+The total is kept on the account page because it is a genuinely different number
+from the balance above it: the total is what the positions are worth, the balance
+is what the institution reports for the whole account, and the difference is cash
+sitting alongside the investments. The page says so rather than hiding one.
 
 - **Unlink institution** — `DELETE /api/items/:id`. Calls Plaid `/item/remove`
   first so the grant is actually revoked, then deletes the row.
@@ -664,12 +701,87 @@ get the minute specified. So a snapshot landing at 12:34 is documented behaviour
 not a misconfiguration — and worth remembering before treating a snapshot's
 timestamp as precise.
 
-The chart draws from a **single** snapshot, as a centred marker with no line and
-no fill, and says so underneath. One point is one point, and a line through it
-would imply a direction the data does not contain. With two or more it renders
-normally. Nothing to show at all is a separate case, and only that one is worth
-treating as a fault: Plaid reports current balances only, so there is nothing to
-backfill and a single day is genuinely one point.
+The chart draws from a **single** snapshot, as a lone marker with no line and no
+fill, and says so underneath. One point is one point, and a line through it would
+imply a direction the data does not contain. With two or more it renders normally.
+Nothing to show at all is a separate case, and only that one is worth treating as
+a fault: Plaid reports current balances only, so there is nothing to backfill and
+a single day is genuinely one point.
+
+### Charts are visx, not hand-rolled
+
+`trend-chart.tsx` was originally hand-rolled SVG, on the grounds that one series
+in one component did not justify a dependency. That was a reasonable call at the
+time and the wrong one to leave in place: it had no hover, no keyboard access to
+the series at all, and raw ISO dates on the x-axis. So it now uses
+[visx](https://visx.dev), installed as the individual packages the chart needs
+(`@visx/scale`, `@visx/shape`, `@visx/axis`, `@visx/grid`, `@visx/curve`,
+`@visx/event`, `@visx/tooltip`) rather than the `visx` umbrella, so nothing else
+gets pulled in. About **27KB gzipped**, and it is the only non-essential runtime
+dependency in the project.
+
+It is now `TrendChart`, not `NetWorthChart`, and serves every graph in the app —
+net worth, an account's balance, a loan paying down — because those differ only
+in the label and whether a rising line is good news (`risingIsGood`: false for a
+credit card or a loan). All three narrow their query rows to `SeriesPoint`
+(`{ date, value }`) first, which is what lets one component serve all three.
+
+### Where the two kinds of history come from
+
+This is the part worth knowing before you trust a graph.
+
+**Loans are reconstructed, not recorded.** The `loan_payments` trigger only ever
+does `balance -= principal` on insert and `+= principal` on delete, so a loan's
+balance on any past day is *exactly*
+
+```
+balance(D) = currentBalance + sum(principal of payments made after D)
+```
+
+`loanBalanceSeries` in `src/lib/loan-math.ts` walks the ledger backwards from
+today's balance to produce that. So a loan's chart is complete from its first
+payment — 15 months of real history on the Mazda 3 the moment the feature lands,
+with nothing to accumulate. Points are emitted at the opening and after each
+payment, not per calendar day: a day with no payment had no balance change, so a
+point per day would be a straight line drawn between events that did not happen.
+
+A hand-corrected balance shifts every point by the same amount, because it shifts
+`currentBalance` and the walk backwards inherits it. The line never shows a jump
+that no payment explains.
+
+**Accounts must be recorded.** Plaid reports current balances only, and
+transactions do not determine a balance — a transfer moves one without the other,
+as do interest and pending authorisations. So `account_balance_snapshots` holds one
+row per account per day, written by the same cron, and it **starts empty**: there
+is nothing to backfill. An account page shows a "fills in from tomorrow" message
+until the first few runs.
+
+Hover and keyboard share one `activeIndex`, so the tooltip is reachable without a
+mouse and there is a single code path that positions it. Arrow keys step through
+the series, Escape clears it, and the accessible name says so.
+
+Two things worth knowing if you add a chart here:
+
+- **Measure the container; do not rely on a `viewBox`.** A `viewBox` scales the
+  drawing to fit, but an HTML tooltip does not scale with it, so the two drift
+  apart at any width other than the one they were designed for.
+  `useMeasuredWidth` in `src/lib/use-measured-width.ts` exists for this, and
+  seeds from a fallback so the server sends a real chart rather than an empty
+  box that fills in on mount.
+- **Keep the maths out of the component.** `nearestIndex` — which recorded day a
+  pointer lands on — lives in `src/lib/series.ts`, free of any chart import, so
+  it can be tested directly. Importing it from a component that pulls in visx
+  drags the whole rendering stack into the test runner, and visx's tooltip
+  imports `react-dom`, which does not load under this project's `react-server`
+  test condition.
+- **`lib/loan-math.ts` is `server-only`.** A client component cannot import it,
+  which is why `ManualLoans` receives `progress` as a prop rather than calling
+  `payoffProgress` itself — the same reason `pendingInterest` and `projection`
+  have always been passed in.
+
+`nearestIndex` snaps to a recorded day rather than interpolating. A pointer in a
+gap between snapshots resolves to a day that exists; it will never report a
+figure for a day that was never measured.
 
 Two things about the history query that are easy to get wrong:
 

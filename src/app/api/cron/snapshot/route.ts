@@ -1,15 +1,20 @@
 import { sql } from "drizzle-orm";
 
-import { db, tables } from "@/db";
+import { db, tables, toNumber } from "@/db";
 import { cronSecret, isAllowedEmail } from "@/lib/env";
-import { getNetWorth } from "@/lib/queries";
+import { getAccounts, getNetWorth } from "@/lib/queries";
 
 /**
- * Daily net-worth snapshot.
+ * Daily balance snapshots: the net-worth total, and one row per account.
  *
- * Plaid reports CURRENT balances only, so net-worth history exists only for
- * days we recorded. There is no backfill. Start this early
- * (PLANNED_ARCHITECTURE.md 5.6).
+ * Plaid reports CURRENT balances only, so both histories exist only for days we
+ * recorded. There is no backfill. Start this early (PLANNED_ARCHITECTURE.md 5.6).
+ *
+ * Loans are absent on purpose. The `loan_payments` trigger only does
+ * `balance -= principal` on insert, so a loan's balance on any past day is
+ * exactly recoverable from the ledger - see `loanBalanceSeries` in
+ * `src/lib/loan-math.ts`. Snapshotting them too would be a strictly worse copy
+ * of data already there in full.
  *
  * Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. We also accept
  * `x-cron-secret` for manual testing with curl.
@@ -48,8 +53,9 @@ export async function GET(request: Request) {
 
   const results = [];
   for (const user of eligible) {
-    const [breakdown, accountCount, liabilityCount] = await Promise.all([
+    const [breakdown, accounts, accountCount, liabilityCount] = await Promise.all([
       getNetWorth(user.id),
+      getAccounts(user.id),
       getAccountCount(user.id),
       getLiabilityCount(user.id),
     ]);
@@ -91,13 +97,48 @@ export async function GET(request: Request) {
         set: { assetsTotal, liabilitiesTotal, netWorth, breakdownJson },
       });
 
-    results.push({ userId: user.id, netWorth: breakdown.netWorth });
+    /*
+     * Per-account balances, for /accounts/[id]. Written for every account type,
+     * not just the cash and investment ones the page links first: it is the same
+     * query for all of them, and a credit card's balance over time is exactly as
+     * interesting as a savings account's.
+     */
+    if (accounts.length > 0) {
+      await db
+        .insert(tables.accountBalanceSnapshots)
+        .values(
+          accounts.map((account) => ({
+            accountId: account.id,
+            snapshotDate,
+            balance: toNumber(account.currentBalance).toFixed(4),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            tables.accountBalanceSnapshots.accountId,
+            tables.accountBalanceSnapshots.snapshotDate,
+          ],
+          // Re-running the cron refreshes the day's reading rather than
+          // duplicating it. A later sync on the same day can move a balance, and
+          // the newest reading is the one the chart should end on. `excluded` is
+          // the row this statement proposed to insert, so this takes the incoming
+          // value without needing it in scope here.
+          set: { balance: sql`excluded.balance` },
+        });
+    }
+
+    results.push({
+      userId: user.id,
+      netWorth: breakdown.netWorth,
+      accounts: accounts.length,
+    });
   }
 
   return Response.json({
     ok: true,
     snapshotDate,
     snapshots: results.length,
+    accounts: results.reduce((total, row) => total + row.accounts, 0),
   });
 }
 

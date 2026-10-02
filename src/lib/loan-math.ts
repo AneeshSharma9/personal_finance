@@ -183,3 +183,113 @@ export function payoffProgress(input: {
   if (principal <= 0) return null;
   return Math.max(0, Math.min(100, ((principal - balance) / principal) * 100));
 }
+/** One point of a loan's balance history. */
+export type LoanBalancePoint = {
+  /** YYYY-MM-DD. */
+  date: string;
+  balance: number;
+};
+
+/**
+ * A loan's balance on every day it changed, reconstructed from the payment ledger.
+ *
+ * This is exact rather than a reconstruction, and it is worth being precise about
+ * why. The `loan_payments` trigger does only two things to `loans.balance`:
+ *
+ *   INSERT  ->  balance -= NEW.principal
+ *   DELETE  ->  balance += OLD.principal
+ *
+ * Nothing else writes the column except the user, via the balance-correction
+ * field. So for any day D,
+ *
+ *   balance(D) = currentBalance + sum(principal of payments made after D)
+ *
+ * Every historical balance is therefore recoverable from what is already stored,
+ * which is why loans need no daily snapshot table while accounts do. It also means
+ * the answer shifts by exactly the same amount as a hand correction: correct the
+ * balance today and every past point moves with it, so the line stays coherent.
+ *
+ * Points are emitted at the loan's opening and after each payment, not for every
+ * calendar day. A day with no payment had no balance change, so a point per day
+ * would be a straight line drawn between events that did not happen - and, worse,
+ * would imply the balance was measured then.
+ *
+ * Two things this deliberately does NOT show, because the ledger does not know
+ * them:
+ *
+ *  - Interest accruing between payments. The trigger subtracts only principal, so
+ *    the stored balance is flat until a payment lands. Real interest accrues
+ *    daily; `accruedInterest` computes it for the loan page's "accrued since the
+ *    last payment" line.
+ *  - The gap between `principal` and the balance before the first payment, which
+ *    is usually interest accrued before the loan was entered. The opening point
+ *    is what the trigger implies, not the stated principal.
+ */
+export function loanBalanceSeries(input: {
+  /** `loans.opened_on`, YYYY-MM-DD. */
+  openedOn: string;
+  /** `loans.balance` as it stands now. */
+  balance: number;
+  /** The payment ledger, in any order. */
+  payments: { paidOn: string; principal: number }[];
+  /**
+   * Today, YYYY-MM-DD. A final point is added when the last payment is older
+   * than this, so the line reaches the present rather than stopping at the last
+   * payment and implying the loan has not been touched since.
+   */
+  today: string;
+}): LoanBalancePoint[] {
+  const payments = [...input.payments].sort((a, b) =>
+    a.paidOn < b.paidOn ? -1 : a.paidOn > b.paidOn ? 1 : 0,
+  );
+
+  const totalPrincipal = payments.reduce(
+    (sum, payment) => sum + payment.principal,
+    0,
+  );
+
+  /*
+   * Walking backwards from the current balance. `balance` starts at today's
+   * figure and adding each payment's principal back undoes it, so every point is
+   * the balance as the trigger left it - no accumulated rounding of its own.
+   */
+  const points: LoanBalancePoint[] = [];
+  let balance = input.balance + totalPrincipal;
+
+  // The opening point sits on the day the loan opened, unless a payment predates
+  // that (a back-dated tag), in which case the first payment's date is the
+  // earliest thing we can honestly place.
+  const firstPaymentDate = payments[0]?.paidOn ?? null;
+  const startDate =
+    firstPaymentDate && firstPaymentDate < input.openedOn
+      ? firstPaymentDate
+      : input.openedOn;
+
+  points.push({ date: startDate, balance: round2(balance) });
+
+  for (const payment of payments) {
+    balance -= payment.principal;
+    const date = payment.paidOn < startDate ? startDate : payment.paidOn;
+    const previous = points[points.length - 1];
+
+    /*
+     * Two payments on one day, or a payment on the opening day, would otherwise
+     * put two points on the same date and make the series ambiguous. Collapse
+     * them: the day's closing balance is the one that matters.
+     */
+    if (previous.date === date) {
+      previous.balance = round2(balance);
+      continue;
+    }
+    points.push({ date, balance: round2(balance) });
+  }
+
+  // Reach the present. Skipped when the last payment is already today, so the
+  // chart does not end on a duplicate point.
+  const last = points[points.length - 1];
+  if (last && input.today > last.date) {
+    points.push({ date: input.today, balance: round2(input.balance) });
+  }
+
+  return points;
+}

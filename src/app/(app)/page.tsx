@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { getAccounts, getItems, getNetWorth } from "@/lib/queries";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
 import { StatusBadge } from "@/components/status-badge";
@@ -40,12 +42,12 @@ export default async function DashboardPage() {
             Each bank login uses one of the 10 Items on your Plaid Trial plan,
             so link only what you need.
           </p>
-          <a
+          <Link
             href="/accounts"
             className="mt-4 inline-block rounded-md bg-neutral-900 px-4 py-2.5 font-medium text-white dark:bg-white dark:text-neutral-900"
           >
             Link an institution
-          </a>
+          </Link>
         </section>
       ) : (
         <>
@@ -112,12 +114,12 @@ export default async function DashboardPage() {
               ))}
             </ul>
             {accounts.length > 8 ? (
-              <a
+              <Link
                 href="/accounts"
                 className="mt-2 inline-block text-sm text-neutral-600 underline dark:text-neutral-400"
               >
                 View all {accounts.length} accounts
-              </a>
+              </Link>
             ) : null}
           </section>
         </>

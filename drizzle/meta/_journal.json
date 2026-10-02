@@ -78,6 +78,13 @@
       "when": 1790946014281,
       "tag": "0010_silent_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790954886761,
+      "tag": "0011_foamy_red_skull",
+      "breakpoints": true
     }
   ]
 }

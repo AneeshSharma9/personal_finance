@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -8,11 +9,17 @@ import { formatCurrency, formatPercent } from "@/lib/format";
 /**
  * Manual loans section for /accounts.
  *
- * A loan is debt the user tracks by hand because Plaid cannot see it. The balance
- * shown here is authoritative and editable - a lender correction or an untagged
- * payment is a real thing - but tagging a transaction in the transactions list
- * moves it too, and the split between interest and principal is decided on the
- * server so the two cannot disagree.
+ * A loan is debt the user tracks by hand because Plaid cannot see it. Each entry
+ * is a link to /loans/[id], which carries the balance chart, the payment history,
+ * the balance correction, un-tagging and delete.
+ *
+ * That split is deliberate. Every one of those actions was inline here, and a row
+ * that is simultaneously a link and a delete button is ambiguous to click and
+ * impossible to make accessible - you cannot nest a button inside an anchor. The
+ * list is now navigation; the consequences live on the thing you opened.
+ *
+ * Adding a loan stays here, because creating is a list-level action and has
+ * nowhere else to belong.
  */
 
 export type ManualLoan = {
@@ -28,6 +35,14 @@ export type ManualLoan = {
   notes: string | null;
   pendingInterest: number;
   projection: { months: number; totalInterest: number } | null;
+  /**
+   * Percent of the original principal already retired, computed on the server.
+   *
+   * It lives in `lib/loan-math.ts`, which is `server-only`, and this is a client
+   * component — so it arrives as data rather than being recomputed here. Same
+   * reason `pendingInterest` and `projection` are passed in.
+   */
+  progress: number | null;
   payments: {
     id: number;
     transactionId: number;
@@ -110,12 +125,7 @@ export function ManualLoans({ initialLoans }: { initialLoans: ManualLoan[] }) {
 
       <ul className="space-y-3">
         {initialLoans.map((loan) => (
-          <LoanCard
-            key={loan.id}
-            loan={loan}
-            call={call}
-            disabled={pending}
-          />
+          <LoanCard key={loan.id} loan={loan} />
         ))}
       </ul>
     </section>
@@ -232,178 +242,39 @@ function LoanForm({
 
 function LoanCard({
   loan,
-  call,
-  disabled,
 }: {
   loan: ManualLoan;
-  call: Call;
-  disabled: boolean;
 }) {
-  const [editingBalance, setEditingBalance] = useState(false);
-  const [balanceInput, setBalanceInput] = useState(String(loan.balance));
-  const [showHistory, setShowHistory] = useState(false);
-
-  const progress =
-    loan.principal > 0
-      ? Math.max(0, Math.min(100, ((loan.principal - loan.balance) / loan.principal) * 100))
-      : null;
-
-  async function saveBalance() {
-    const response = await call("/api/loans", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: loan.id, balance: balanceInput }),
-    });
-    if (response) setEditingBalance(false);
-  }
-
-  async function remove() {
-    if (!confirm(`Delete "${loan.name}" and its payment history?`)) return;
-    const response = await call(`/api/loans?id=${loan.id}`, { method: "DELETE" });
-    if (response) setShowHistory(false);
-  }
-
-  async function untag(transactionId: number) {
-    await call(`/api/transactions/${transactionId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ loanId: null }),
-    });
-  }
-
   return (
-    <li className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+    <li className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+      <Link
+        href={`/loans/${loan.id}`}
+        className="flex flex-wrap items-baseline justify-between gap-2 p-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+      >
         <div className="min-w-0">
-          <p className="truncate font-medium">{loan.name}</p>
+          <p className="truncate font-medium underline-offset-2">{loan.name}</p>
           <p className="text-xs text-neutral-500">
             {formatPercent(loan.apr)} APR
             {loan.paymentAmount !== null
               ? ` · ${formatCurrency(loan.paymentAmount)}/mo`
               : ""}
-            {progress !== null ? ` · ${progress.toFixed(0)}% paid` : ""}
+            {loan.progress !== null
+              ? ` · ${loan.progress.toFixed(0)}% paid`
+              : ""}
+            {loan.payments.length > 0
+              ? ` · ${loan.payments.length} payment${loan.payments.length === 1 ? "" : "s"}`
+              : ""}
           </p>
         </div>
-
         <div className="text-right">
-          {editingBalance ? (
-            <span className="inline-flex items-center gap-1">
-              <input
-                value={balanceInput}
-                onChange={(event) => setBalanceInput(event.target.value)}
-                inputMode="decimal"
-                aria-label="Current balance"
-                className="w-24 rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-neutral-700 dark:bg-neutral-800"
-              />
-              <button
-                type="button"
-                onClick={saveBalance}
-                disabled={disabled}
-                className="rounded-md border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
-              >
-                Save
-              </button>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setBalanceInput(String(loan.balance));
-                setEditingBalance(true);
-              }}
-              className="font-medium tabular-nums underline decoration-dotted"
-              title="Correct the balance"
-            >
-              {formatCurrency(loan.balance)}
-            </button>
-          )}
+          <p className="font-medium tabular-nums">
+            {formatCurrency(loan.balance)}
+          </p>
           <p className="text-xs text-neutral-500">
             of {formatCurrency(loan.principal)} borrowed
           </p>
         </div>
-      </div>
-
-      {loan.pendingInterest > 0 ? (
-        <p className="mt-2 text-xs text-neutral-500">
-          {formatCurrency(loan.pendingInterest)} of interest has accrued since
-          the last payment and is not in the balance above.
-        </p>
-      ) : null}
-
-      {loan.projection ? (
-        <p className="mt-1 text-xs text-neutral-500">
-          About {loan.projection.months} monthly payments left,{" "}
-          {formatCurrency(loan.projection.totalInterest)} of interest to pay.
-        </p>
-      ) : loan.balance > 0 ? (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-          No payoff estimate: set a monthly payment above the interest, or the
-          balance only grows.
-        </p>
-      ) : (
-        <p className="mt-1 text-xs text-green-700 dark:text-green-400">
-          Paid off.
-        </p>
-      )}
-
-      <div className="mt-2 flex items-center gap-3 text-xs">
-        <button
-          type="button"
-          onClick={() => setShowHistory((value) => !value)}
-          className="text-neutral-600 underline dark:text-neutral-400"
-        >
-          {showHistory ? "Hide" : "Show"}{" "}
-          {loan.payments.length === 0
-            ? "no payments"
-            : `${loan.payments.length} payment${loan.payments.length === 1 ? "" : "s"}`}
-        </button>
-        <button
-          type="button"
-          onClick={remove}
-          className="text-red-600 underline dark:text-red-400"
-        >
-          Delete
-        </button>
-      </div>
-
-      {showHistory ? (
-        <ul className="mt-2 divide-y divide-neutral-100 border-t border-neutral-100 text-xs dark:divide-neutral-800 dark:border-neutral-800">
-          {loan.payments.length === 0 ? (
-            <li className="pt-2 text-neutral-500">
-              Nothing tagged yet. Open the Transactions page and pick this loan on
-              a payment.
-            </li>
-          ) : (
-            [...loan.payments].reverse().map((payment) => (
-              <li
-                key={payment.id}
-                className="flex flex-wrap items-center justify-between gap-2 py-1.5"
-              >
-                <span className="tabular-nums text-neutral-500">
-                  {payment.paidOn}
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {/* Who was paid. Without this a history of "600.00" rows is
-                      not checkable against a bank statement. */}
-                  {payment.payee ?? "Unknown payee"}
-                </span>
-                <span className="tabular-nums">
-                  {formatCurrency(payment.amount)} ={" "}
-                  {formatCurrency(payment.principal)} principal +{" "}
-                  {formatCurrency(payment.interest)} interest
-                </span>
-                <button
-                  type="button"
-                  onClick={() => untag(payment.transactionId)}
-                  className="text-neutral-600 underline dark:text-neutral-400"
-                >
-                  Un-tag
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      ) : null}
+      </Link>
     </li>
   );
 }

@@ -8,6 +8,11 @@ import type { HoldingWithDetails } from "@/lib/queries";
  * broker holding the same fund), so grouping is by account rather than by
  * ticker - otherwise one holding would silently absorb the other.
  *
+ * This is the multi-account presentation, for the net-worth page. An account's own
+ * page wants `HoldingsTable` instead: it already has the account as its heading
+ * and a balance as its headline figure, so repeating either here produced the
+ * same name three times and the same total twice on screen.
+ *
  * Server component: no interactivity, just a read of what the query returned.
  */
 export function HoldingsList({
@@ -30,13 +35,11 @@ export function HoldingsList({
   }
 
   const sections = [...groups.values()]
-    .map((group) => {
-      const rows = [...group.rows].sort(
-        (a, b) => (b.institutionValue ?? 0) - (a.institutionValue ?? 0),
-      );
-      const total = rows.reduce((sum, row) => sum + (row.institutionValue ?? 0), 0);
-      return { name: group.name, rows, total };
-    })
+    .map((group) => ({
+      name: group.name,
+      rows: byValueDescending(group.rows),
+      total: totalValue(group.rows),
+    }))
     .sort((a, b) => b.total - a.total);
 
   const grandTotal = sections.reduce((sum, section) => sum + section.total, 0);
@@ -60,39 +63,58 @@ export function HoldingsList({
               </p>
             </div>
 
-            <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-              {section.rows.map((holding) => (
-                <li
-                  key={holding.id}
-                  className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">
-                      {holding.tickerSymbol ?? holding.securityName}
-                    </p>
-                    {/*
-                      The account is the heading above, so repeating it on every
-                      row would be noise. What is left is the part that is unique
-                      to this holding.
-                    */}
-                    <p className="text-xs text-neutral-500">
-                      {formatUnits(holding.quantity)} units
-                      {holding.securityType ? ` · ${holding.securityType}` : ""}
-                    </p>
-                  </div>
-                  <p className="shrink-0 tabular-nums">
-                    {holding.institutionValue !== null
-                      ? formatCurrency(holding.institutionValue)
-                      : "-"}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            <HoldingsTable rows={section.rows} />
           </div>
         ))}
       </div>
     </section>
   );
+}
+
+/**
+ * The positions themselves, largest first, and nothing else.
+ *
+ * No heading, no account name, no total - all three belong to whatever is
+ * presenting the table, and on a single account's page all three are already on
+ * screen. What is left is the part that is unique to each holding.
+ */
+export function HoldingsTable({ rows }: { rows: HoldingWithDetails[] }) {
+  if (rows.length === 0) return null;
+
+  return (
+    <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+      {byValueDescending(rows).map((holding) => (
+        <li
+          key={holding.id}
+          className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
+        >
+          <div className="min-w-0">
+            <p className="truncate font-medium">
+              {holding.tickerSymbol ?? holding.securityName}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {formatUnits(holding.quantity)} units
+              {holding.securityType ? ` · ${holding.securityType}` : ""}
+            </p>
+          </div>
+          <p className="shrink-0 tabular-nums">
+            {holding.institutionValue !== null
+              ? formatCurrency(holding.institutionValue)
+              : "-"}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Sum of what the holdings are worth. A holding with no value counts as zero. */
+export function totalValue(rows: HoldingWithDetails[]): number {
+  return rows.reduce((sum, row) => sum + (row.institutionValue ?? 0), 0);
+}
+
+function byValueDescending(rows: HoldingWithDetails[]): HoldingWithDetails[] {
+  return [...rows].sort((a, b) => (b.institutionValue ?? 0) - (a.institutionValue ?? 0));
 }
 
 /**

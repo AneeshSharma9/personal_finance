@@ -841,6 +841,46 @@ export const loanPayments = pgTable(
   ],
 );
 
+/**
+ * A linked account's balance on one day, written by the daily cron.
+ *
+ * Loan balances deliberately do NOT need a table like this one, because the
+ * `loan_payments` ledger can reconstruct them exactly - see `loanBalanceSeries`
+ * in `src/lib/loan-math.ts`. Accounts have no equivalent: Plaid reports current
+ * balances only, transactions do not determine a balance (transfers, interest and
+ * pending authorisations all move one without the other), so the only honest
+ * record of an account's balance on a past day is one we wrote that day.
+ *
+ * Which also means there is nothing to backfill, and this table starts empty.
+ */
+export const accountBalanceSnapshots = pgTable(
+  "account_balance_snapshots",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Date column (not timestamptz), so the unique index is a real day guard. */
+    snapshotDate: date("snapshot_date").notNull(),
+    /** `accounts.current_balance` as the cron read it that day. */
+    balance: numeric("balance", { precision: 18, scale: 4 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // One reading per account per day, and the re-run path updates rather than
+    // duplicating. Doubles as the index that serves the chart's
+    // `where account_id = ? order by snapshot_date` query, so no second index.
+    uniqueIndex("account_balance_snapshots_account_date_key").on(
+      t.accountId,
+      t.snapshotDate,
+    ),
+  ],
+);
+
+export type AccountBalanceSnapshot = typeof accountBalanceSnapshots.$inferSelect;
+
 // ---------------------------------------------------------------------------
 // net_worth_snapshots (one row per user per day, written by the cron job)
 // ---------------------------------------------------------------------------

@@ -3,7 +3,11 @@ import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
-import { accruedInterest, projectPayoff } from "@/lib/loan-math";
+import {
+  accruedInterest,
+  payoffProgress,
+  projectPayoff,
+} from "@/lib/loan-math";
 import {
   getAccounts,
   getItems,
@@ -20,10 +24,7 @@ import {
 } from "@/components/plaid-link-button";
 import { StatusBadge } from "@/components/status-badge";
 import { SyncButton } from "@/components/sync-button";
-import {
-  RemoveAccountButton,
-  UnlinkButton,
-} from "@/components/unlink-controls";
+import { UnlinkButton } from "@/components/unlink-controls";
 
 export const metadata: Metadata = { title: "Accounts · Finance" };
 
@@ -160,34 +161,29 @@ export default async function AccountsPage() {
           </h2>
           <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {linkedLoans.map((account) => (
-              <li
-                key={account.id}
-                className="flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{account.name}</p>
-                  <p className="text-xs text-neutral-500">
-                    {account.institutionName ?? "Unknown institution"}
-                    {account.mask ? ` ····${account.mask}` : ""} · balance
-                    comes from the sync
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <p className="font-medium tabular-nums">
+              <li key={account.id}>
+                {/*
+                  Whole row is the link, matching the loan cards. That was only
+                  possible once the remove button moved to this account's own
+                  page: a button cannot be nested inside an anchor, and a
+                  row-sized link wrapping "remove this" is a misclick.
+                */}
+                <Link
+                  href={`/accounts/${account.id}`}
+                  className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{account.name}</p>
+                    <p className="text-xs text-neutral-500">
+                      {account.institutionName ?? "Unknown institution"}
+                      {account.mask ? ` ····${account.mask}` : ""} · balance
+                      comes from the sync
+                    </p>
+                  </div>
+                  <p className="shrink-0 font-medium tabular-nums">
                     {formatCurrency(Number(account.currentBalance))}
                   </p>
-                  {/*
-                    Same control the other account groups get. Removing a loan
-                    account deletes its transactions and its liabilities row with
-                    it; the institution stays linked, so a later sync can bring
-                    the account back.
-                  */}
-                  <RemoveAccountButton
-                    accountId={account.id}
-                    accountName={account.name}
-                    transactionCount={transactionCounts.get(account.id) ?? 0}
-                  />
-                </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -203,46 +199,27 @@ export default async function AccountsPage() {
           </h2>
           <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
             {group.list.map((account) => (
-              <li
-                key={account.id}
-                className="flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{account.name}</p>
-                  <p className="text-xs text-neutral-500">
-                    {account.institutionName ?? "Unknown institution"}
-                    {account.mask ? ` ····${account.mask}` : ""}
-                    {account.subtype ? ` · ${humanize(account.subtype)}` : ""}
-                    {/*
-                      The count is a link, not a label. It was the one number on
-                      the page with no way to act on it - "1,204 transactions" is
-                      a question ("which ones?"), and the transactions page could
-                      already filter by account, it just had no control for it.
-                      Zero is left as plain text because there is nothing to open.
-                    */}
-                    {transactionCounts.get(account.id) ? (
-                      <>
-                        {" · "}
-                        <Link
-                          href={`/transactions?accountId=${account.id}`}
-                          className="underline underline-offset-2"
-                        >
-                          {transactionCounts.get(account.id)} transactions
-                        </Link>
-                      </>
-                    ) : null}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <p className="font-medium tabular-nums">
+              <li key={account.id}>
+                <Link
+                  href={`/accounts/${account.id}`}
+                  className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{account.name}</p>
+                    <p className="text-xs text-neutral-500">
+                      {account.institutionName ?? "Unknown institution"}
+                      {account.mask ? ` ····${account.mask}` : ""}
+                      {account.subtype ? ` · ${humanize(account.subtype)}` : ""}
+                      {/* Plain text; it is a link on this account's own page. */}
+                      {transactionCounts.get(account.id)
+                        ? ` · ${transactionCounts.get(account.id)} transactions`
+                        : ""}
+                    </p>
+                  </div>
+                  <p className="shrink-0 font-medium tabular-nums">
                     {formatCurrency(Number(account.currentBalance))}
                   </p>
-                  <RemoveAccountButton
-                    accountId={account.id}
-                    accountName={account.name}
-                    transactionCount={transactionCounts.get(account.id) ?? 0}
-                  />
-                </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -345,6 +322,13 @@ async function buildManualLoanViews(
           balance: loan.balance,
           apr: loan.apr,
           payment: loan.paymentAmount,
+        }),
+        // Computed here rather than in the component: lib/loan-math is
+        // server-only and ManualLoans is a client component, so it arrives as
+        // data for the same reason pendingInterest and projection do.
+        progress: payoffProgress({
+          balance: loan.balance,
+          principal: loan.principal,
         }),
         payments: payments.map((payment) => ({
           id: payment.id,
