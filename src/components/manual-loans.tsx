@@ -124,7 +124,14 @@ export function ManualLoans({ initialLoans }: { initialLoans: ManualLoan[] }) {
         </p>
       ) : null}
 
-      <ul className="space-y-3">
+      {/*
+        Shaped like every other list on /accounts: one bordered container with
+        dividers between rows. These were separate bordered cards with gaps between
+        them, which made the section read as a different kind of thing rather than
+        as more accounts - and on a narrow screen the gaps were most of the
+        difference.
+      */}
+      <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {initialLoans.map((loan) => (
           <LoanCard key={loan.id} loan={loan} />
         ))}
@@ -251,14 +258,25 @@ function LoanCard({
   loan: ManualLoan;
 }) {
   return (
-    <li className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+    <li>
+      {/*
+        `items-center`, `px-4 py-3` and `shrink-0` are copied from the account and
+        linked-loan rows rather than chosen.
+
+        They are what stops this card breaking on a phone. `flex-wrap` used to be
+        here, so when the two columns stopped fitting, the balance dropped onto a
+        second line and jumped to the left edge - one long name and one short
+        loan rendered as a ragged two-row block. Without `shrink-0` the amount could
+        also be squeezed mid-number. Now the row holds its shape all the way down,
+        exactly like the cards above it.
+      */}
       <Link
         href={`/loans/${loan.id}`}
-        className="flex flex-wrap items-baseline justify-between gap-2 p-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
       >
         <div className="min-w-0">
-          <p className="truncate font-medium underline-offset-2">{loan.name}</p>
-          <p className="text-xs text-neutral-500">
+          <p className="truncate font-medium">{loan.name}</p>
+          <p className="truncate text-xs text-neutral-500">
             {formatPercent(loan.apr)} APR
             {loan.paymentAmount !== null
               ? ` · ${formatCurrency(loan.paymentAmount)}/mo`
@@ -271,7 +289,7 @@ function LoanCard({
               : ""}
           </p>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <p className="font-medium tabular-nums">
             {formatCurrency(loan.balance)}
           </p>
