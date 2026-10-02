@@ -742,12 +742,30 @@ it.
 
 ### History needs two days to exist
 
-`GET /api/cron/snapshot` writes one row per user per day, idempotently, guarded
-by `CRON_SECRET`:
+`GET /api/cron/snapshot` runs two steps in order, guarded by `CRON_SECRET`. First
+it syncs every Plaid Item, then it writes one snapshot row per user per day,
+idempotently:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/snapshot
 ```
+
+The order is the point. The snapshot records balances, and balances are only as
+fresh as the last Plaid call, so syncing first means the day's row holds today's
+numbers instead of whatever the last page load happened to leave behind. Reversed,
+it would be a permanently one-day-stale chart and nothing downstream would notice.
+
+**The sync is why you don't have to press Refresh.** Because the job pulls
+transactions, balances, holdings and liabilities on its own, "Last synced" on the
+dashboard advances while the app sits closed. It is still worth keeping the
+button — it is the only way to pull a transaction that landed an hour ago.
+
+Each step is isolated: a Plaid outage reports itself in the response and the
+snapshot still lands, rather than the whole run failing and the day having no row
+at all. A broken Item doesn't even fail the step — `refreshAllForItem` returns
+`ok: false` and writes the Item's status, which is what surfaces the dashboard's
+"needs attention" link. The response carries `sync[]` and `failedSteps[]` so the
+Vercel logs say what actually happened.
 
 **When it runs: 12:00 UTC daily, via Vercel Cron** (`vercel.json`). Nothing in
 the repo invokes it on a schedule, so `npm run dev` never fires it — locally the
@@ -863,8 +881,8 @@ tampered payload. Local development needs a tunnel:
 cloudflared tunnel --url http://localhost:3000
 ```
 
-Without a webhook URL, data still syncs via the **Refresh** button; you just
-don't get pushed updates.
+Without a webhook URL, the daily cron still syncs once a day and the **Refresh**
+button still works on demand; you just don't get pushed updates between runs.
 
 ## Security notes
 
