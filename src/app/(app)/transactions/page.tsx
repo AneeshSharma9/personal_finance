@@ -41,6 +41,7 @@ export default async function TransactionsPage({
     getCategories(user.id),
   ]);
 
+
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -67,7 +68,7 @@ export default async function TransactionsPage({
             name="q"
             defaultValue={search ?? ""}
             placeholder="Merchant or description"
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800"
           />
         </label>
 
@@ -76,7 +77,7 @@ export default async function TransactionsPage({
           <select
             name="category"
             defaultValue={category ?? ""}
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-800"
           >
             <option value="">All categories</option>
             {categories.map((value) => (

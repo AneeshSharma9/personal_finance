@@ -22,6 +22,27 @@
       "when": 1790872037742,
       "tag": "0002_budget_assignments_and_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790906227746,
+      "tag": "0003_high_prodigy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790906287542,
+      "tag": "0004_motionless_dark_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790907618301,
+      "tag": "0005_gray_songbird",
+      "breakpoints": true
     }
   ]
 }

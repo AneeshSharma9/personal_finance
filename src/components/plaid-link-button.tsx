@@ -30,7 +30,7 @@ type LinkState =
 export function PlaidLinkButton({
   /** When set, the token is an update-mode token for this Item (no new slot). */
   itemId,
-  buttonLabel = "Link an account",
+  buttonLabel = "Link an institution",
   className,
 }: {
   itemId?: number;
@@ -155,11 +155,17 @@ export function PlaidLinkButton({
 
   return (
     <div className={className}>
+      {/*
+        Sized to match SyncButton, which sits next to it on /accounts. text-sm +
+        py-2 give the same 36px content box; the transparent border adds the 1px
+        edge SyncButton gets from `border`, so the two are identical in height
+        while keeping the solid fill.
+      */}
       <button
         type="button"
         onClick={handleClick}
         disabled={state.phase === "exchanging"}
-        className="rounded-md bg-neutral-900 px-4 py-2.5 font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className="rounded-md border border-transparent bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
       >
         {label}
       </button>

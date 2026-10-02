@@ -84,6 +84,22 @@ export const liabilityKind = pgEnum("liability_kind", [
   "other",
 ]);
 
+/**
+ * What a manual loan is for.
+ *
+ * Separate from `liabilityKind` because that enum describes Plaid liabilities
+ * (which are pinned to a synced account) while this describes loans the user
+ * tracks by hand.
+ */
+export const loanKind = pgEnum("loan_kind", [
+  "auto",
+  "personal",
+  "student",
+  "mortgage",
+  "medical",
+  "other",
+]);
+
 export const recurringFrequency = pgEnum("recurring_frequency", [
   "weekly",
   "monthly",
@@ -347,11 +363,19 @@ export const transactions = pgTable(
  * What a rule matches on.
  *
  * `merchant` beats `category` in evaluation order: a specific merchant rule is a
- * deliberate override of the broad category default.
+ * deliberate override of the broad category default. `amount` is the most
+ * specific of all and is evaluated first: an exact figure is an unambiguous
+ * statement about one transaction, which is how a single irregular payment gets
+ * caught without inventing a category for it.
+ *
+ * Amount rules match on the magnitude, so they catch a $600 outflow and a $600
+ * inflow alike. A rule aimed at a loan additionally requires money out, because
+ * a loan payment is money out.
  */
 export const budgetRuleMatchType = pgEnum("budget_rule_match_type", [
   "merchant",
   "category",
+  "amount",
 ]);
 
 /**
@@ -368,15 +392,35 @@ export const budgetRules = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    /** Bucket this rule routes into. Deleting the bucket deletes its rules. */
-    budgetId: integer("budget_id")
-      .notNull()
-      .references(() => budgets.id, { onDelete: "cascade" }),
+    /**
+     * Bucket this rule routes into.
+     *
+     * Nullable so a rule can point at a loan instead - see `loan_id`. Exactly one
+     * of the two is set, enforced by a CHECK constraint in the migration, because
+     * "goes to a bucket" and "pays off a loan" are different intents and a row
+     * claiming both would be ambiguous.
+     */
+    budgetId: integer("budget_id").references(() => budgets.id, {
+      onDelete: "cascade",
+    }),
+    /**
+     * Loan this rule pays down. Tagged transactions become loan payments, which
+     * is what moves the loan's balance.
+     */
+    loanId: integer("loan_id").references(() => loans.id, {
+      onDelete: "cascade",
+    }),
     matchType: budgetRuleMatchType("match_type").notNull(),
     /**
      * For `merchant`: a case-insensitive substring of the merchant or raw
      * description. For `category`: a Plaid category value, matched with prefix
      * semantics so `FOOD_AND_DRINK` absorbs its detailed children.
+     */
+    /**
+     * For `merchant`: a case-insensitive substring. For `category`: a Plaid
+     * category, matched with prefix semantics. For `amount`: the figure as a
+     * decimal string, compared numerically against abs(amount) rather than as
+     * text, so "600" and "600.00" are the same rule.
      */
     matchValue: text("match_value").notNull(),
     /** Lower runs first. Ties are broken by id so evaluation is deterministic. */
@@ -398,6 +442,7 @@ export const budgetRules = pgTable(
       t.matchValue,
     ),
     index("budget_rules_user_budget_idx").on(t.userId, t.budgetId),
+    index("budget_rules_user_loan_idx").on(t.userId, t.loanId),
     index("budget_rules_user_priority_idx").on(t.userId, t.priority),
   ],
 );
@@ -588,6 +633,136 @@ export const manualAccounts = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// loans + loan_payments (debt the user tracks by hand)
+// ---------------------------------------------------------------------------
+
+/**
+ * A loan the user tracks manually, because Plaid does not see it.
+ *
+ * Deliberately separate from `liabilities`, which is pinned 1:1 to a synced
+ * account (`uniqueIndex(account_id)`) and whose balance belongs to Plaid. A car
+ * loan held at a credit union the user does not bank with is invisible to Plaid,
+ * so the balance has to be ours.
+ *
+ * Interest model: simple interest on the outstanding balance, accrued per day at
+ * APR/365 from `last_accrued_at`. Actual/365 rather than a whole monthly step
+ * because payments get tagged whenever the user gets round to it, not on a
+ * billing date.
+ */
+export const loans = pgTable(
+  "loans",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: loanKind("kind").notNull().default("other"),
+    /** APR as a percent, e.g. 5.9 for 5.9% - same convention as liabilities.apr. */
+    apr: numeric("apr", { precision: 8, scale: 4 }).notNull().default("0"),
+    /** Original amount borrowed. Kept so payoff progress can be shown. */
+    principal: numeric("principal", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0"),
+    /**
+     * What is still owed.
+     *
+     * Authoritative and user-editable (a lender correction or a missed payment
+     * is a real thing), but also moved by the `loan_payments` trigger: each
+     * payment adds the interest it accrued and subtracts the principal it
+     * retired. The trigger is what keeps this honest when Plaid later deletes
+     * the underlying transaction during a sync.
+     */
+    balance: numeric("balance", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0"),
+    /** Expected payment. Informational: drives the payoff projection only. */
+    paymentAmount: numeric("payment_amount", { precision: 18, scale: 2 }),
+    /**
+     * Interest has been accounted for up to this date. Advanced by each
+     * accrual, so tagging two payments a month apart does not double-count.
+     * Null means "not yet accrued"; the loan treats that as its created date.
+     */
+    lastAccruedAt: date("last_accrued_at"),
+    /** Date the loan started, used for the initial accrual period. */
+    openedOn: date("opened_on").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("loans_user_name_key").on(t.userId, t.name),
+    index("loans_user_id_idx").on(t.userId),
+  ],
+);
+
+/**
+ * A tagged transaction paying down a loan.
+ *
+ * This ledger, not a column on `transactions`, is the record of a loan payment.
+ * Two reasons it earns its own table:
+ *
+ *  1. It stores the interest/principal split. Recomputing that later would give a
+ *     different answer, because it depends on the balance at the moment of
+ *     payment and the balance is user-editable.
+ *  2. UNIQUE on transaction_id means a transaction can pay at most one loan, and
+ *     ON DELETE CASCADE means that when Plaid reports the transaction removed
+ *     (sync.ts deletes the row), the payment disappears too and the trigger
+ *     returns the money to the balance.
+ */
+export const loanPayments = pgTable(
+  "loan_payments",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    loanId: integer("loan_id")
+      .notNull()
+      .references(() => loans.id, { onDelete: "cascade" }),
+    transactionId: integer("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    /** Gross amount that left the bank account. Always equals interest + principal. */
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    /** Portion of `amount` that was interest: it increased the balance. */
+    interest: numeric("interest", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0"),
+    /** Portion of `amount` that actually reduced the balance. */
+    principal: numeric("principal", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0"),
+    /** Overpayment on a loan that was already settled. Kept for the audit trail. */
+    overpayment: numeric("overpayment", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0"),
+    /** Transaction date, not insertion date, so history reads chronologically. */
+    paidOn: date("paid_on").notNull(),
+    /**
+     * Start of the interest period this payment closed: the loan's
+     * `last_accrued_at` before the payment (or `opened_on` if it had never
+     * accrued).
+     *
+     * Recorded so the trigger can put `last_accrued_at` back on delete. Without
+     * it, un-tagging a payment would restore the balance but leave the accrual
+     * cursor advanced, so the reverted stretch of interest would never be
+     * counted again.
+     */
+    accruedFrom: date("accrued_from").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("loan_payments_transaction_id_key").on(t.transactionId),
+    index("loan_payments_loan_id_idx").on(t.loanId),
+    index("loan_payments_loan_paid_on_idx").on(t.loanId, t.paidOn),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // net_worth_snapshots (one row per user per day, written by the cron job)
 // ---------------------------------------------------------------------------
 
@@ -683,6 +858,7 @@ export type ManualAccountKind = (typeof manualAccountKind.enumValues)[number];
 export type BudgetKind = (typeof budgetKind.enumValues)[number];
 export type BudgetRuleMatchType = (typeof budgetRuleMatchType.enumValues)[number];
 export type LiabilityKind = (typeof liabilityKind.enumValues)[number];
+export type LoanKind = (typeof loanKind.enumValues)[number];
 
 export type User = typeof users.$inferSelect;
 export type Item = typeof items.$inferSelect;
@@ -696,6 +872,8 @@ export type Holding = typeof holdings.$inferSelect;
 export type InvestmentTxn = typeof investmentTxns.$inferSelect;
 export type Liability = typeof liabilities.$inferSelect;
 export type ManualAccount = typeof manualAccounts.$inferSelect;
+export type Loan = typeof loans.$inferSelect;
+export type LoanPayment = typeof loanPayments.$inferSelect;
 export type NetWorthSnapshot = typeof netWorthSnapshots.$inferSelect;
 
 /** Plaid gives us decimals as strings; everything downstream wants numbers. */

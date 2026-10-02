@@ -4,7 +4,7 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
-import { isCatchAll } from "@/lib/categories";
+import { isCatchAll, suggestedBuckets } from "@/lib/categories";
 import { getActualsByBucket } from "@/lib/budget-engine";
 
 /**
@@ -111,6 +111,8 @@ export type TransactionRow = {
   notes: string | null;
   website: string | null;
   accountName: string;
+  /** Set when this transaction is tagged as a loan payment. */
+  loanId: number | null;
 };
 
 export async function getTransactions(
@@ -152,7 +154,7 @@ export async function getTransactions(
 
   const where = and(...conditions);
 
-  const [txns, accounts, [{ count }]] = await Promise.all([
+  const [txns, accounts, tagged, [{ count }]] = await Promise.all([
     db.query.transactions.findMany({
       where,
       orderBy: [
@@ -166,6 +168,20 @@ export async function getTransactions(
       where: inArray(tables.accounts.id, accountIds),
       columns: { id: true, name: true },
     }),
+    // Which of these transactions are tagged as loan payments. One query for the
+    // page rather than a lookup per row, joined back to transactions so it is
+    // scoped to this user's accounts rather than the whole table.
+    db
+      .select({
+        transactionId: tables.loanPayments.transactionId,
+        loanId: tables.loanPayments.loanId,
+      })
+      .from(tables.loanPayments)
+      .innerJoin(
+        tables.transactions,
+        eq(tables.transactions.id, tables.loanPayments.transactionId),
+      )
+      .where(inArray(tables.transactions.accountId, accountIds)),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(tables.transactions)
@@ -173,6 +189,9 @@ export async function getTransactions(
   ]);
 
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const loanByTransaction = new Map(
+    tagged.map((row) => [row.transactionId, row.loanId]),
+  );
 
   return {
     rows: txns.map((t) => {
@@ -193,6 +212,7 @@ export async function getTransactions(
         notes: t.notes,
         website: t.website,
         accountName: accountNameById.get(t.accountId) ?? "Unknown account",
+        loanId: loanByTransaction.get(t.id) ?? null,
       };
     }),
     total: count,
@@ -334,45 +354,6 @@ export type BudgetRowResult = {
 };
 
 export type BudgetGroups = Record<tables.BudgetKind, BudgetRowResult[]>;
-
-export type BudgetRuleResult = {
-  id: number;
-  budgetId: number;
-  budgetName: string;
-  matchType: tables.BudgetRuleMatchType;
-  matchValue: string;
-  priority: number;
-  active: boolean;
-};
-
-/** Rules with their target bucket's name, for the rules panel. */
-export async function getBudgetRules(userId: string): Promise<BudgetRuleResult[]> {
-  const [rules, budgets] = await Promise.all([
-    db.query.budgetRules.findMany({
-      where: eq(tables.budgetRules.userId, userId),
-      orderBy: [
-        asc(tables.budgetRules.priority),
-        asc(tables.budgetRules.id),
-      ],
-    }),
-    db.query.budgets.findMany({
-      where: eq(tables.budgets.userId, userId),
-      columns: { id: true, name: true },
-    }),
-  ]);
-
-  const nameById = new Map(budgets.map((b) => [b.id, b.name]));
-
-  return rules.map((rule) => ({
-    id: rule.id,
-    budgetId: rule.budgetId,
-    budgetName: nameById.get(rule.budgetId) ?? "Unknown bucket",
-    matchType: rule.matchType,
-    matchValue: rule.matchValue,
-    priority: rule.priority,
-    active: rule.active,
-  }));
-}
 
 export type SpendSummary = {
   /** Transactions with no budget bucket yet. */
@@ -729,6 +710,53 @@ export async function getTransactionsInBucket(
  * frozen Plaid list because the PFC taxonomy moved to v2 for Items created after
  * 2025-12-03, so any hardcoded set would go stale.
  */
+/**
+ * Categories a new bucket can be created from.
+ *
+ * Two things this deliberately is not:
+ *
+ *  - Not windowed by month. The previous query took `from`/`to`, which meant the
+ *    list changed as you moved the month strip, so a bucket set up for March
+ *    could not be added again in April.
+ *  - Not limited to categories already in the transactions. Offering only what
+ *    exists meant a bucket for a category with no spending yet could be deleted
+ *    and never re-created, because the category vanished from the list with it.
+ *
+ * So this is the union of the user's own categories across all history and the
+ * canonical set in categories.ts. Stable, and always enough to rebuild a bucket.
+ */
+export async function getCategoryOptions(userId: string): Promise<string[]> {
+  const accountIds = await getAccountIds(userId);
+
+  const seen = new Set<string>();
+
+  if (accountIds.length > 0) {
+    const rows = await db.execute<{ category: string }>(sql`
+      select distinct coalesce(
+        ${tables.transactions.categoryOverride},
+        ${tables.transactions.plaidCategoryDetailed},
+        ${tables.transactions.plaidCategoryPrimary}
+      ) as category
+      from transactions
+      where ${inArray(tables.transactions.accountId, accountIds)}
+        and coalesce(
+          ${tables.transactions.categoryOverride},
+          ${tables.transactions.plaidCategoryDetailed},
+          ${tables.transactions.plaidCategoryPrimary}
+        ) is not null
+    `);
+    for (const row of rows) seen.add(row.category);
+  }
+
+  // The suggestions are a starting point, not a limit: every Plaid category
+  // they reference is offered whether or not the user has spent there yet.
+  for (const bucket of suggestedBuckets) {
+    for (const category of bucket.matches) seen.add(category);
+  }
+
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
 export async function getSpendableCategories(
   userId: string,
   from: string,
@@ -866,12 +894,117 @@ export async function getHoldings(
 // Net worth
 // ---------------------------------------------------------------------------
 
+export type LoanRow = {
+  id: number;
+  name: string;
+  kind: tables.LoanKind;
+  apr: number;
+  principal: number;
+  balance: number;
+  paymentAmount: number | null;
+  openedOn: string;
+  lastAccruedAt: string | null;
+  notes: string | null;
+};
+
+/**
+ * Hand-tracked loans, newest name first.
+ *
+ * `balance` is returned as stored. The `loan_payments` trigger keeps it in step
+ * with the payment history, so it never needs recomputing here.
+ */
+export async function getLoans(userId: string): Promise<LoanRow[]> {
+  const rows = await db.query.loans.findMany({
+    where: eq(tables.loans.userId, userId),
+    orderBy: [asc(tables.loans.name)],
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    apr: toNumber(row.apr),
+    principal: toNumber(row.principal),
+    balance: toNumber(row.balance),
+    paymentAmount:
+      row.paymentAmount === null ? null : toNumber(row.paymentAmount),
+    openedOn: row.openedOn,
+    lastAccruedAt: row.lastAccruedAt,
+    notes: row.notes,
+  }));
+}
+
+export type LoanPaymentRow = {
+  id: number;
+  loanId: number;
+  transactionId: number;
+  amount: number;
+  interest: number;
+  principal: number;
+  overpayment: number;
+  paidOn: string;
+  /** Merchant name, falling back to the raw description. Null if neither. */
+  payee: string | null;
+};
+
+/** Payment history for one loan, newest first. */
+export async function getLoanPayments(
+  userId: string,
+  loanId: number,
+): Promise<LoanPaymentRow[]> {
+  const owned = await db.query.loans.findFirst({
+    where: and(eq(tables.loans.id, loanId), eq(tables.loans.userId, userId)),
+    columns: { id: true },
+  });
+  if (!owned) return [];
+
+  /*
+   * Joined to transactions because "600 on 2026-03-02" is not a payment history
+   * anyone can check against their bank statement; the merchant is what makes it
+   * recognisable.
+   */
+  const rows = await db
+    .select({
+      id: tables.loanPayments.id,
+      loanId: tables.loanPayments.loanId,
+      transactionId: tables.loanPayments.transactionId,
+      amount: tables.loanPayments.amount,
+      interest: tables.loanPayments.interest,
+      principal: tables.loanPayments.principal,
+      overpayment: tables.loanPayments.overpayment,
+      paidOn: tables.loanPayments.paidOn,
+      merchantName: tables.transactions.merchantName,
+      name: tables.transactions.name,
+    })
+    .from(tables.loanPayments)
+    .innerJoin(
+      tables.transactions,
+      eq(tables.transactions.id, tables.loanPayments.transactionId),
+    )
+    .where(eq(tables.loanPayments.loanId, loanId))
+    .orderBy(desc(tables.loanPayments.paidOn), desc(tables.loanPayments.id));
+
+  return rows.map((row) => ({
+    id: row.id,
+    loanId: row.loanId,
+    transactionId: row.transactionId,
+    amount: toNumber(row.amount),
+    interest: toNumber(row.interest),
+    principal: toNumber(row.principal),
+    overpayment: toNumber(row.overpayment),
+    paidOn: row.paidOn,
+    payee: row.merchantName ?? row.name ?? null,
+  }));
+}
+
 export type NetWorthBreakdown = {
   cash: number;
   other: number;
   investments: number;
   creditCards: number;
   loans: number;
+  /** Of `loans`, the part that is a hand-tracked loan rather than a synced one. */
+  manualLoans: number;
   manualAssets: number;
   manualLiabilities: number;
   assets: number;
@@ -889,9 +1022,10 @@ export type NetWorthBreakdown = {
  */
 export async function getNetWorth(userId: string): Promise<NetWorthBreakdown> {
   const accounts = await getAccounts(userId);
-  const [holdings, manual] = await Promise.all([
+  const [holdings, manual, manualLoans] = await Promise.all([
     getHoldings(userId),
     getManualAccounts(userId),
+    getLoans(userId),
   ]);
 
   const breakdown: NetWorthBreakdown = {
@@ -900,6 +1034,7 @@ export async function getNetWorth(userId: string): Promise<NetWorthBreakdown> {
     investments: 0,
     creditCards: 0,
     loans: 0,
+    manualLoans: 0,
     manualAssets: 0,
     manualLiabilities: 0,
     assets: 0,
@@ -948,6 +1083,21 @@ export async function getNetWorth(userId: string): Promise<NetWorthBreakdown> {
     } else {
       breakdown.manualLiabilities += value;
     }
+  }
+
+  /*
+   * Hand-tracked loans count as debt and are reported under `loans` rather than
+   * `manualLiabilities`, because a reader looking at "Loans" expects a car loan
+   * to be there whether Plaid can see it or not.
+   *
+   * `Math.abs` because `splitPayment` can leave a balance negative in one case:
+   * a loan where the payment does not cover the interest it accrued. That is a
+   * growing debt, so it must still add to liabilities rather than cancel them.
+   */
+  for (const loan of manualLoans) {
+    const owed = Math.abs(toNumber(loan.balance));
+    breakdown.manualLoans += owed;
+    breakdown.loans += owed;
   }
 
   breakdown.assets =

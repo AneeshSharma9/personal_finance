@@ -4,6 +4,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
 import { requireUserId } from "@/lib/auth";
+import { parseMoney } from "@/lib/money";
 
 /**
  * Budgets, grouped for the Rocket Money style layout.
@@ -251,20 +252,6 @@ function parseBudgetInput(body: unknown): BudgetInput {
   }
 
   return { kind, name, category, budgeted, sortOrder };
-}
-
-/** Parse a money input, tolerating "$" and commas. Null when unparseable. */
-function parseMoney(value: unknown): number | null {
-  if (typeof value === "number") {
-    return Number.isFinite(value) && value >= 0 ? value : null;
-  }
-  if (typeof value !== "string") return null;
-
-  const cleaned = value.replace(/[$,\s]/g, "");
-  if (cleaned.length === 0) return 0;
-
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 async function nextSortOrder(

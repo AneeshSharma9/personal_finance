@@ -279,15 +279,31 @@ function BudgetTable({
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
 }) {
+  /*
+   * The picker used to render only while the section was empty, so adding one
+   * bucket removed the only way to add a second. It now sits behind a control in
+   * the section header and stays open until dismissed.
+   */
+  const [adding, setAdding] = useState(false);
+
   return (
     <section>
-      <header className="mb-2">
-        <h2 className="font-medium">{title}</h2>
-        <p className="text-xs text-neutral-500">{subtitle}</p>
+      <header className="mb-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-medium">{title}</h2>
+          <p className="text-xs text-neutral-500">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAdding((value) => !value)}
+          className="shrink-0 text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
+        >
+          {adding ? "Cancel" : "Add bucket"}
+        </button>
       </header>
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-800">
           <span>Name</span>
           <span className="text-right">Budgeted</span>
           <span className="text-right">Actual</span>
@@ -311,18 +327,26 @@ function BudgetTable({
           />
         ))}
 
-        {rows.length === 0 ? (
+        {/*
+          Shown when the section is empty, so the first bucket is discoverable
+          without hunting for a button, and whenever the header toggle is open.
+        */}
+        {rows.length === 0 || adding ? (
           <CategoryPicker
             options={options}
             disabled={pending}
-            onPick={(category) =>
-              onSave({
+            emptyLabel={
+              rows.length === 0 ? "Pick a category to add a bucket" : undefined
+            }
+            onPick={(category) => {
+              setAdding(false);
+              return onSave({
                 kind,
                 name: humanizeCategory(category),
                 category,
                 budgeted: 0,
-              })
-            }
+              });
+            }}
           />
         ) : null}
       </div>
@@ -352,15 +376,30 @@ function EarningsTable({
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
 }) {
+  // Same treatment as the budget sections: the picker is behind a control
+  // instead of permanently occupying the bottom of the table.
+  const [adding, setAdding] = useState(false);
+
   return (
     <section>
-      <header className="mb-2">
-        <h2 className="font-medium">Earnings</h2>
-        <p className="text-xs text-neutral-500">Income received this month.</p>
+      <header className="mb-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-medium">Earnings</h2>
+          <p className="text-xs text-neutral-500">
+            Income received this month. Deposits are routed here automatically.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAdding((value) => !value)}
+          className="shrink-0 text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
+        >
+          {adding ? "Cancel" : "Add bucket"}
+        </button>
       </header>
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-800">
           <span>Name</span>
           <span className="text-right">Budgeted</span>
           <span className="text-right">Actual</span>
@@ -368,7 +407,8 @@ function EarningsTable({
 
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-neutral-500">
-            No earnings buckets yet.
+            No earnings buckets yet. Deposits will not be routed anywhere until
+            one exists.
           </p>
         ) : null}
 
@@ -384,19 +424,22 @@ function EarningsTable({
           />
         ))}
 
-        <CategoryPicker
-          options={options}
-          disabled={pending}
-          emptyLabel="Pick an income category"
-          onPick={(category) =>
-            onSave({
-              kind: "earning",
-              name: humanizeCategory(category),
-              category,
-              budgeted: 0,
-            })
-          }
-        />
+        {adding ? (
+          <CategoryPicker
+            options={options}
+            disabled={pending}
+            emptyLabel="Pick an income category"
+            onPick={(category) => {
+              setAdding(false);
+              return onSave({
+                kind: "earning",
+                name: humanizeCategory(category),
+                category,
+                budgeted: 0,
+              });
+            }}
+          />
+        ) : null}
       </div>
     </section>
   );
@@ -443,7 +486,7 @@ function CategoryPicker({
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder={`${emptyLabel} (${options.length})`}
-        className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+        className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
       />
       <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
         {visible.map((category) => (

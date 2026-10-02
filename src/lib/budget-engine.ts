@@ -29,12 +29,22 @@ export type AssignmentResult = {
 
 /** Cached per request; the engine runs after a sync on every webhook. */
 export type RuleSet = {
+  /** Exact-figure rules, evaluated before everything else. */
+  amountRules: { budgetId: number; value: number }[];
   merchantRules: { budgetId: number; value: string }[];
   categoryRules: { budgetId: number; value: string }[];
   /** Implicit per-bucket category rules, in display order. */
   bucketCategories: { budgetId: number; value: string; name: string }[];
   catchAllBudgetId: number | null;
   earningBudgetIds: number[];
+  /**
+   * Rules that pay down a loan rather than fill a bucket.
+   *
+   * Held apart from the bucket rules because the two targets are different kinds
+   * of thing: a bucket assignment moves money between spending categories, while
+   * a loan rule mints a payment record and moves a debt balance.
+   */
+  loanRules: { loanId: number; matchType: string; value: string }[];
 };
 
 export async function loadRuleSet(userId: string): Promise<RuleSet> {
@@ -59,17 +69,39 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
     }),
   ]);
 
-  const merchantRules = rules
+  // A loan rule has no bucket, and a bucket rule has no loan. The CHECK
+  // constraint guarantees exactly one is set, so the nulls here are expected and
+  // are filtered rather than coerced.
+  const bucketRules = rules.filter((rule) => rule.budgetId !== null);
+  const loanRules = rules
+    .filter((rule) => rule.loanId !== null)
+    .map((rule) => ({
+      loanId: rule.loanId!,
+      matchType: rule.matchType,
+      value: rule.matchType === "merchant" ? rule.matchValue.toLowerCase() : rule.matchValue,
+    }));
+
+  const amountRules = bucketRules
+    .filter((rule) => rule.matchType === "amount")
+    .map((rule) => ({
+      budgetId: rule.budgetId!,
+      // Stored as text but compared as a number, so "600" and "600.00" are one
+      // rule rather than two that never both fire.
+      value: Number(rule.matchValue),
+    }))
+    .filter((rule) => Number.isFinite(rule.value));
+
+  const merchantRules = bucketRules
     .filter((rule) => rule.matchType === "merchant")
     .map((rule) => ({
-      budgetId: rule.budgetId,
+      budgetId: rule.budgetId!,
       value: rule.matchValue.toLowerCase(),
     }));
 
-  const categoryRules = rules
+  const categoryRules = bucketRules
     .filter((rule) => rule.matchType === "category")
     .map((rule) => ({
-      budgetId: rule.budgetId,
+      budgetId: rule.budgetId!,
       value: rule.matchValue.toUpperCase(),
     }));
 
@@ -94,6 +126,7 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
   );
 
   return {
+    amountRules,
     merchantRules,
     categoryRules,
     bucketCategories,
@@ -101,6 +134,7 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
     earningBudgetIds: budgets
       .filter((budget) => budget.budgetKind === "earning")
       .map((budget) => budget.id),
+    loanRules,
   };
 }
 
@@ -112,14 +146,43 @@ export function resolveBucket(
     categoryOverride: string | null;
     plaidCategoryPrimary: string | null;
     plaidCategoryDetailed: string | null;
+    /** Plaid sign: positive for money out. Amount rules compare the magnitude. */
+    amount?: number;
   },
   rules: RuleSet,
 ): number | null {
+  /*
+   * Exact-amount rules come first, ahead of the income short-circuit below.
+   * An exact figure is the most specific statement a user can make about a
+   * transaction, so it outranks both a merchant heuristic and Plaid's guess that
+   * the money was income.
+   */
+  if (row.amount !== undefined) {
+    const magnitude = Math.abs(row.amount);
+    for (const rule of rules.amountRules) {
+      if (Math.abs(rule.value - magnitude) < 0.005) {
+        return rule.budgetId;
+      }
+    }
+  }
+
   const candidates = categoryCandidates(row);
   const isIncome = candidates.some(isEarningCategory);
 
+  /*
+   * A deposit is income even when Plaid does not call it income.
+   *
+   * Category keywords alone miss most real deposits: Plaid files a payment from
+   * an employer as TRANSFER_IN, not PAYROLL, so a payroll deposit would land in
+   * a spending bucket and never appear under earnings at all. Money arriving is
+   * the actual signal.
+   *
+   * Plaid's sign convention is positive for money out, so negative is an inflow.
+   */
+  const isDeposit = row.amount !== undefined && row.amount < 0;
+
   // Income goes to an earnings bucket and never to a spending one.
-  if (isIncome) {
+  if (isIncome || isDeposit) {
     return rules.earningBudgetIds[0] ?? null;
   }
 
@@ -244,7 +307,8 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
   const byBucket: Record<string, number> = {};
 
   for (const row of pending) {
-    const budgetId = resolveBucket(row, rules);
+    // Amount rules compare a number; the column arrives as a numeric string.
+    const budgetId = resolveBucket({ ...row, amount: toNumber(row.amount) }, rules);
     if (budgetId === null) continue;
     updates.push({ id: row.id, budgetId });
     byBucket[String(budgetId)] = (byBucket[String(budgetId)] ?? 0) + 1;

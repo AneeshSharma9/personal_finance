@@ -70,14 +70,16 @@ export default async function NetWorthPage() {
             label="Investments (holdings value)"
             value={netWorth.investments}
           />
-          <Row label="Manual assets" value={netWorth.manualAssets} />
           <Row label="Credit cards" value={netWorth.creditCards} negative />
           <Row label="Loans" value={netWorth.loans} negative />
-          <Row
-            label="Manual liabilities"
-            value={netWorth.manualLiabilities}
-            negative
-          />
+      {/*
+        Manual assets and liabilities are hidden rather than shown as $0.00.
+        `manual_accounts` has no write path yet - no route, no insert anywhere -
+        so both totals are structurally always zero and displaying them only
+        implies they are being tracked. The read path, the breakdown fields and
+        the snapshot keys are all left in place, so this is a display change and
+        the feature can be revived without a migration.
+      */}
           <div className="border-t border-neutral-200 pt-1 font-medium dark:border-neutral-800">
             <Row label="Net worth" value={netWorth.netWorth} strong />
           </div>
@@ -176,7 +178,7 @@ export default async function NetWorthPage() {
 
       {accounts.length === 0 ? (
         <p className="text-xs text-neutral-500">
-          Link an account to start tracking net worth.
+          Link an institution to start tracking net worth.
         </p>
       ) : null}
     </div>

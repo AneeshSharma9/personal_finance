@@ -147,7 +147,7 @@ export function UnlinkButton({
       aria-label={`Unlink ${label}`}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-900">
+      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-800">
         <h2 className="text-lg font-semibold">Unlink {label}?</h2>
 
         <div className="mt-3 space-y-3 text-sm">
@@ -202,7 +202,7 @@ export function UnlinkButton({
             value={confirmText}
             onChange={(event) => setConfirmText(event.target.value)}
             autoComplete="off"
-            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 dark:border-neutral-700 dark:bg-neutral-800"
           />
         </label>
 
@@ -294,7 +294,7 @@ export function RemoveAccountButton({
       aria-label={`Remove ${accountName}`}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-900">
+      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl dark:bg-neutral-800">
         <h2 className="text-lg font-semibold">Remove {accountName}?</h2>
         <p className="mt-2 text-sm">
           This deletes the account and its{" "}

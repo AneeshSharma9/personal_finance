@@ -2,11 +2,16 @@ import "server-only";
 
 import { and, eq, inArray } from "drizzle-orm";
 
-import { db, tables } from "@/db";
+import { db, tables, toNumber } from "@/db";
 import { requireUserId } from "@/lib/auth";
+import {
+  clearLoanPayment,
+  LoanError,
+  recordLoanPayment,
+} from "@/lib/loan-payments";
 
 /**
- * Edit a transaction: re-categorize, add notes.
+ * Edit a transaction: re-categorize, add notes, or tag it as a loan payment.
  *
  * The transaction is looked up through its account's Item, so a user can never
  * touch another user's row even with a guessed id.
@@ -27,7 +32,12 @@ export async function PATCH(
     return Response.json({ error: "Invalid transaction id." }, { status: 400 });
   }
 
-  let body: { categoryOverride?: unknown; notes?: unknown };
+  let body: {
+    categoryOverride?: unknown;
+    notes?: unknown;
+    budgetId?: unknown;
+    loanId?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -42,6 +52,8 @@ export async function PATCH(
   }>;
 
   let categoryChanged = false;
+  /** Set when a loan tag was applied, so the client can show the split. */
+  let loanResult: unknown = null;
 
   try {
     patch = { updatedAt: new Date() };
@@ -78,14 +90,84 @@ export async function PATCH(
     throw error;
   }
 
-  if (Object.keys(patch).length === 1) {
+  if (Object.keys(patch).length === 1 && !("loanId" in body)) {
     return Response.json(
       {
         error:
-          "Nothing to update. Send categoryOverride, notes, or budgetId.",
+          "Nothing to update. Send categoryOverride, notes, budgetId, or loanId.",
       },
       { status: 400 },
     );
+  }
+
+  /*
+   * Loan tagging is handled separately from the column patch: it inserts a
+   * loan_payments row and the database trigger moves the balance, so there is no
+   * column on `transactions` to write. Ownership is re-checked here because the
+   * existing check below runs inside the update's transaction.
+   */
+  if ("loanId" in body) {
+    const existing = await findOwnedTransaction(auth.userId, id);
+    if (!existing) {
+      // 404 rather than 403: do not confirm the row exists for someone else.
+      return Response.json(
+        { error: "Transaction not found." },
+        { status: 404 },
+      );
+    }
+
+    try {
+      if (body.loanId === null || body.loanId === "") {
+        // Un-tagging. The trigger adds the principal back, so the balance
+        // returns to what it was before the tag.
+        loanResult = await clearLoanPayment({ transactionId: id });
+      } else {
+        const loanId = Number(body.loanId);
+        if (!Number.isInteger(loanId) || loanId <= 0) {
+          return Response.json(
+            { error: "loanId must be a positive integer or null." },
+            { status: 400 },
+          );
+        }
+
+        // Plaid signs: positive means money left the account. A loan payment is
+        // money out, so an inflow is a mistake worth reporting rather than
+        // silently flipping into a payment.
+        const amount = toNumber(existing.amount);
+        if (amount <= 0) {
+          return Response.json(
+            {
+              error:
+                "That transaction is money coming in, not a payment. Tag an outgoing transaction instead.",
+            },
+            { status: 400 },
+          );
+        }
+
+        loanResult = await recordLoanPayment({
+          loanId,
+          userId: auth.userId,
+          transactionId: id,
+          paidOn: existing.date,
+          amount,
+        });
+      }
+    } catch (error) {
+      if (error instanceof LoanError) {
+        return Response.json({ error: error.message }, { status: error.status });
+      }
+      // UNIQUE violation: this transaction already pays a loan.
+      if (error instanceof Error && error.message.includes("loan_payments")) {
+        return Response.json(
+          {
+            error:
+              "That transaction is already tagged as a loan payment. Un-tag it first.",
+          },
+          { status: 400 },
+        );
+      }
+      throw error;
+    }
   }
 
   const updated = await db.transaction(async (tx) => {
@@ -110,35 +192,73 @@ export async function PATCH(
     return Response.json({ error: "Transaction not found." }, { status: 404 });
   }
 
-  return Response.json({ transaction: updated });
+  return Response.json({ transaction: updated, loan: loanResult });
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-async function ownedTransactionIds(tx: Tx, userId: string): Promise<number[]> {
-  const items = await tx.query.items.findMany({
+/** Either the pool handle or an open transaction; both expose `.query`. */
+type Queryable = Tx | typeof db;
+
+async function ownedAccountIds(
+  dbx: Queryable,
+  userId: string,
+): Promise<number[]> {
+  const items = await dbx.query.items.findMany({
     where: eq(tables.items.userId, userId),
     columns: { id: true },
   });
   if (items.length === 0) return [];
 
-  const accounts = await tx.query.accounts.findMany({
+  const accounts = await dbx.query.accounts.findMany({
     where: inArray(
       tables.accounts.itemId,
       items.map((i) => i.id),
     ),
     columns: { id: true },
   });
-  if (accounts.length === 0) return [];
+  return accounts.map((a) => a.id);
+}
+
+async function ownedTransactionIds(tx: Tx, userId: string): Promise<number[]> {
+  const accountIds = await ownedAccountIds(tx, userId);
+  if (accountIds.length === 0) return [];
 
   const transactions = await tx.query.transactions.findMany({
     where: inArray(
       tables.transactions.accountId,
-      accounts.map((a) => a.id),
+      accountIds,
     ),
     columns: { id: true },
   });
   return transactions.map((t) => t.id);
+}
+
+/**
+ * Fetch one transaction only if it belongs to the user.
+ *
+ * Needed before tagging a loan payment, because the loan write happens outside
+ * the update transaction below. Verifying ownership inside that transaction and
+ * then writing the payment separately would leave a window where a user could
+ * attach somebody else's transaction to their own loan.
+ */
+async function findOwnedTransaction(
+  userId: string,
+  id: number,
+): Promise<{ id: number; amount: string; date: string } | null> {
+  const accountIds = await ownedAccountIds(db, userId);
+  if (accountIds.length === 0) return null;
+
+  const row = await db.query.transactions.findFirst({
+    where: and(
+      eq(tables.transactions.id, id),
+      inArray(tables.transactions.accountId, accountIds),
+    ),
+    // Relational queries take a boolean selection mask; `.returning()` elsewhere
+    // in this file takes column references instead.
+    columns: { id: true, amount: true, date: true },
+  });
+  return row ?? null;
 }
 
 /** Empty string clears the override, which restores Plaid's own category. */

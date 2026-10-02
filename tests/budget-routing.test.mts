@@ -11,16 +11,18 @@ const B = { dining: 1, groceries: 2, transport: 3, catchAll: 4, income: 5 };
 
 function rules(overrides: Partial<RuleSet> = {}): RuleSet {
   return {
+    amountRules: [],
     merchantRules: [],
     categoryRules: [],
     bucketCategories: [],
     catchAllBudgetId: B.catchAll,
     earningBudgetIds: [],
+    loanRules: [],
     ...overrides,
   };
 }
 
-const txn = (over: Record<string, string | null> = {}) => ({
+const txn = (over: Record<string, string | number | null> = {}) => ({
   merchantName: null,
   name: null,
   categoryOverride: null,
@@ -119,6 +121,63 @@ test("an explicit category rule beats a bucket's own category", () => {
     resolveBucket(txn({ plaidCategoryPrimary: "FOOD_AND_DRINK" }), set),
     B.groceries,
   );
+});
+
+test("a deposit is income even when Plaid calls it a transfer", () => {
+  // The reported problem: Plaid files a payroll deposit as TRANSFER_IN, which
+  // matches no income keyword, so it landed in a spending bucket and Earnings
+  // stayed empty.
+  const row = txn({
+    merchantName: "ACME PAYROLL",
+    plaidCategoryPrimary: "TRANSFER_IN",
+    amount: "-2500",
+  });
+  assert.equal(
+    resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+    B.income,
+  );
+});
+
+test("any money coming in is income, whatever the category", () => {
+  for (const category of ["TRANSFER_IN", "GENERAL_MERCHANDISE", "FOOD_AND_DRINK"]) {
+    const row = txn({ plaidCategoryPrimary: category, amount: "-100" });
+    assert.equal(
+      resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+      B.income,
+      `${category} inflow should be income`,
+    );
+  }
+});
+
+test("an outflow is not income, so spending never lands in earnings", () => {
+  // The invariant that matters: direction, not category, is what makes money
+  // income. An outflow stays in a spending bucket.
+  for (const category of ["TRANSFER_OUT", "FOOD_AND_DRINK", "GENERAL_MERCHANDISE"]) {
+    const row = txn({ plaidCategoryPrimary: category, amount: "40" });
+    assert.notEqual(
+      resolveBucket(row, rules({ earningBudgetIds: [B.income] })),
+      B.income,
+      `${category} outflow should not be income`,
+    );
+  }
+});
+
+test("a deposit beats a merchant rule, the same way income does", () => {
+  const row = txn({
+    merchantName: "Starbucks",
+    plaidCategoryPrimary: "TRANSFER_IN",
+    amount: "-25",
+  });
+  const withMerchant = rules({
+    merchantRules: [{ budgetId: B.dining, value: "starbucks" }],
+    earningBudgetIds: [B.income],
+  });
+  assert.equal(resolveBucket(row, withMerchant), B.income);
+});
+
+test("with no earnings bucket a deposit is left unassigned, not misfiled", () => {
+  const row = txn({ plaidCategoryPrimary: "TRANSFER_IN", amount: "-500" });
+  assert.equal(resolveBucket(row, rules({ earningBudgetIds: [] })), null);
 });
 
 test("income goes to the earnings bucket, never to spending", () => {

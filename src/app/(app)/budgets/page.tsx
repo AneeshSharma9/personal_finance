@@ -3,17 +3,15 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { monthRange } from "@/lib/format";
 import {
-  getBudgetRules,
   getBudgetSummary,
   getBudgetsWithActuals,
   getLatestTransactionMonth,
   getMonthlySeries,
   getYearRange,
-  getSpendableCategories,
+  getCategoryOptions,
   getSpendSummary,
 } from "@/lib/queries";
 import { BudgetEditor } from "@/components/budget-editor";
-import { BudgetRules } from "@/components/budget-rules";
 import { BudgetSummary } from "@/components/budget-summary";
 import { MonthStrip } from "@/components/month-strip";
 
@@ -86,15 +84,13 @@ export default async function BudgetsPage({
     groups,
     availableCategories,
     unassigned,
-    rules,
     summary,
     series,
     yearRange,
   ] = await Promise.all([
     getBudgetsWithActuals(user.id, from, to),
-    getSpendableCategories(user.id, from, to),
+    getCategoryOptions(user.id),
     getSpendSummary(user.id, from, to),
-    getBudgetRules(user.id),
     getBudgetSummary(user.id, from, to),
     getMonthlySeries(user.id, stripMonths),
     getYearRange(user.id),
@@ -152,15 +148,16 @@ export default async function BudgetsPage({
         }}
       />
 
-      <BudgetRules
-        buckets={[
-          ...basics.map((row) => ({ id: row.id, name: row.name })),
-          ...spending.map((row) => ({ id: row.id, name: row.name })),
-          ...earnings.map((row) => ({ id: row.id, name: row.name })),
-        ]}
-        availableCategories={availableCategories}
-        initialRules={rules}
-      />
+      {/*
+        Rules live on their own page now: they can target loans as well as
+        buckets, which does not belong under a page about monthly limits.
+      */}
+      <p className="text-sm text-neutral-500">
+        <a href="/rules" className="underline">
+          Manage rules
+        </a>{" "}
+        to route transactions automatically, including past ones.
+      </p>
     </div>
   );
 }

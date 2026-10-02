@@ -2,12 +2,16 @@ import type { Metadata } from "next";
 
 import { requireUser } from "@/lib/auth";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
+import { accruedInterest, projectPayoff } from "@/lib/loan-math";
 import {
   getAccounts,
   getItems,
+  getLoanPayments,
+  getLoans,
   getNetWorth,
   getTransactionCountsByAccount,
 } from "@/lib/queries";
+import { ManualLoans } from "@/components/manual-loans";
 import { PlaidLinkButton, ReauthButton } from "@/components/plaid-link-button";
 import { StatusBadge } from "@/components/status-badge";
 import { SyncButton } from "@/components/sync-button";
@@ -21,16 +25,26 @@ export const metadata: Metadata = { title: "Accounts · Finance" };
 export default async function AccountsPage() {
   const user = await requireUser();
 
-  const [items, accounts, netWorth] = await Promise.all([
+  const [items, accounts, netWorth, loans] = await Promise.all([
     getItems(user.id),
     getAccounts(user.id),
     getNetWorth(user.id),
+    getLoans(user.id),
   ]);
 
   // Per-institution transaction counts, so the removal dialogs can state exactly
   // what a click will destroy rather than "some data".
   const transactionCounts = await getTransactionCountsByAccount(user.id);
   const groups = groupByType(accounts);
+
+  /*
+   * Plaid loan accounts and hand-tracked loans are deliberately separate
+   * sections: the first is maintained by a sync and cannot be edited, the second
+   * is the user's own figure and can be. Presenting them in one list would hide
+   * which numbers are authoritative.
+   */
+  const linkedLoans = accounts.filter((account) => account.type === "loan");
+  const manualLoans = await buildManualLoanViews(user.id, loans);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -50,7 +64,7 @@ export default async function AccountsPage() {
 
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
-          No accounts yet. Use &ldquo;Link an account&rdquo; to connect a bank.
+          No accounts yet. Use &ldquo;Link an institution&rdquo; to connect a bank.
         </p>
       ) : null}
 
@@ -125,6 +139,53 @@ export default async function AccountsPage() {
         </section>
       ) : null}
 
+      {/*
+        Plaid loan accounts get their own section rather than appearing in the
+        generic groups below, so the balance on show is clearly Plaid's.
+      */}
+      {linkedLoans.length > 0 ? (
+        <section>
+          <h2 className="mb-2 text-sm font-medium text-neutral-500">
+            Linked loans
+          </h2>
+          <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+            {linkedLoans.map((account) => (
+              <li
+                key={account.id}
+                className="flex items-center justify-between gap-3 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{account.name}</p>
+                  <p className="text-xs text-neutral-500">
+                    {account.institutionName ?? "Unknown institution"}
+                    {account.mask ? ` ····${account.mask}` : ""} · balance
+                    comes from the sync
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <p className="font-medium tabular-nums">
+                    {formatCurrency(Number(account.currentBalance))}
+                  </p>
+                  {/*
+                    Same control the other account groups get. Removing a loan
+                    account deletes its transactions and its liabilities row with
+                    it; the institution stays linked, so a later sync can bring
+                    the account back.
+                  */}
+                  <RemoveAccountButton
+                    accountId={account.id}
+                    accountName={account.name}
+                    transactionCount={transactionCounts.get(account.id) ?? 0}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <ManualLoans initialLoans={manualLoans} />
+
       {groups.map((group) => (
         <section key={group.title}>
           <h2 className="mb-2 text-sm font-medium text-neutral-500">
@@ -169,13 +230,8 @@ export default async function AccountsPage() {
           <dl className="space-y-1 text-sm">
             <Row label="Cash" value={netWorth.cash + netWorth.other} />
             <Row label="Investments" value={netWorth.investments} />
-            <Row label="Manual assets" value={netWorth.manualAssets} />
             <Row label="Credit cards" value={netWorth.creditCards} />
             <Row label="Loans" value={netWorth.loans} />
-            <Row
-              label="Manual liabilities"
-              value={netWorth.manualLiabilities}
-            />
             <div className="border-t border-neutral-200 pt-1 font-medium dark:border-neutral-800">
               <Row label="Net worth" value={netWorth.netWorth} strong />
             </div>
@@ -213,7 +269,7 @@ function groupByType(accounts: Awaited<ReturnType<typeof getAccounts>>) {
   const order: { title: string; types: string[] }[] = [
     { title: "Cash", types: ["depository"] },
     { title: "Credit cards", types: ["credit"] },
-    { title: "Loans", types: ["loan"] },
+    // "loan" is excluded: Plaid loans render in their own section above.
     { title: "Investments", types: ["investment"] },
     { title: "Other", types: ["other"] },
   ];
@@ -224,6 +280,59 @@ function groupByType(accounts: Awaited<ReturnType<typeof getAccounts>>) {
       list: accounts.filter((account) => types.includes(account.type)),
     }))
     .filter((group) => group.list.length > 0);
+}
+
+/**
+ * Assemble what ManualLoans needs: the stored row, the interest accrued since
+ * the last payment, the payoff estimate, and the payment history.
+ *
+ * The interest split on each payment is stored, not recomputed, so history stays
+ * truthful even after the user corrects the balance by hand.
+ */
+async function buildManualLoanViews(
+  userId: string,
+  loans: Awaited<ReturnType<typeof getLoans>>,
+) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  return Promise.all(
+    loans.map(async (loan) => {
+      const payments = await getLoanPayments(userId, loan.id);
+
+      return {
+        id: loan.id,
+        name: loan.name,
+        kind: loan.kind,
+        apr: loan.apr,
+        principal: loan.principal,
+        balance: loan.balance,
+        paymentAmount: loan.paymentAmount,
+        openedOn: loan.openedOn,
+        lastAccruedAt: loan.lastAccruedAt,
+        notes: loan.notes,
+        pendingInterest: accruedInterest({
+          balance: loan.balance,
+          apr: loan.apr,
+          fromDate: loan.lastAccruedAt ?? loan.openedOn,
+          toDate: today,
+        }),
+        projection: projectPayoff({
+          balance: loan.balance,
+          apr: loan.apr,
+          payment: loan.paymentAmount,
+        }),
+        payments: payments.map((payment) => ({
+          id: payment.id,
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          interest: payment.interest,
+          principal: payment.principal,
+          paidOn: payment.paidOn,
+          payee: payment.payee,
+        })),
+      };
+    }),
+  );
 }
 
 function humanize(value: string): string {

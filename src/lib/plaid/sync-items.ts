@@ -162,6 +162,28 @@ async function routeNewTransactions(userId: string): Promise<number> {
           "transactions into buckets",
       );
     }
+
+    /*
+     * Loan rules run after bucket routing, separately and just as non-fatally.
+     * They are a different kind of write - each match mints a payment record and
+     * moves a debt balance - so a failure here must not undo or block the bucket
+     * routing above.
+     */
+    try {
+      const { applyLoanRules } = await import("@/lib/rules");
+      const loans = await applyLoanRules(userId);
+      if (loans.tagged > 0) {
+        console.log(
+          `[loans] recorded ${loans.tagged} payments from rules`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[loans] rule engine failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+
     return outcome.assigned;
   } catch (error) {
     console.error(

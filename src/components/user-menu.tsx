@@ -85,7 +85,7 @@ export function UserMenu({
 
       {open ? (
         <div
-          className={`absolute inset-x-0 z-30 rounded-md border border-neutral-200 bg-white p-3 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 ${
+          className={`absolute inset-x-0 z-30 rounded-md border border-neutral-200 bg-white p-3 shadow-lg dark:border-neutral-700 dark:bg-neutral-800 ${
             placement === "top" ? "bottom-full mb-1" : "top-full mt-1"
           }`}
         >

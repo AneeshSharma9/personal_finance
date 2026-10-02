@@ -111,7 +111,7 @@ export function CategoryEditor({
         onKeyDown={(event) => {
           if (event.key === "Escape") setOpen(false);
         }}
-        className="max-w-[14rem] rounded border border-neutral-300 bg-white px-1 py-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900"
+        className="max-w-[14rem] rounded border border-neutral-300 bg-white px-1 py-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-800"
       >
         {plaidCategoryPrimary ? (
           <option value={PLAID_OPTION}>

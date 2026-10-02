@@ -127,8 +127,19 @@ Two things worth knowing:
 - **Keep `PLAID_ENV=sandbox` until you are ready.** See "Adding a bank" below.
 
 The daily snapshot cron is already configured in `vercel.json`
-(`17 7 * * *`). Vercel sends `Authorization: Bearer $CRON_SECRET` automatically
-when that variable is set.
+(`0 12 * * *`, i.e. 08:00 America/New_York). Vercel sends
+`Authorization: Bearer $CRON_SECRET` automatically when that variable is set.
+
+Vercel cron schedules are always UTC and cannot name a timezone, so this cannot
+stay at 08:00 ET across a DST change. **On 1 November 2026** New York leaves
+EDT (UTC-4) for EST (UTC-5) and the job will start firing at 07:00 local.
+Change the schedule to `0 13 * * *` at that point to hold 08:00, and back to
+`0 12 * * *` in March.
+
+The endpoint fails closed: with `CRON_SECRET` unset it returns 500 rather than
+running, so a missing variable is visible instead of silently leaving the
+snapshot table empty. It still 401s if Vercel's copy of the variable is missing
+or stale - check the deployment logs, not just your local `.env.local`.
 
 ### Diagnosing a bad deploy
 
@@ -321,11 +332,119 @@ Income is read from **earnings bucket assignments**, not from every negative
 amount. Raw money-in includes transfers between your own accounts, which are not
 income; counting them made the month strip disagree with the summary card.
 
+## Rules
+
+`/rules` manages automatic routing for **both** buckets and loans. Rules used to
+live under Budgets, which was wrong as soon as a rule could pay down a loan: that
+is a different kind of write (it mints a payment record and moves a debt balance)
+from sorting spending into a bucket.
+
+`GET|PUT /api/rules`, `DELETE /api/rules?id=`.
+
+### Match types
+
+| Type | Matches | Notes |
+|---|---|---|
+| `merchant` | Merchant or raw description contains the text | Case-insensitive, substring not prefix |
+| `category` | A Plaid category, or any child of it | Boundary-aware: `FOOD` does not claim `FASTFOOD_RESTAURANT` |
+| `amount` | That exact figure | Magnitude, so direction-agnostic; `600` and `600.00` are one rule |
+
+A rule targets **either** a bucket **or** a loan, enforced by a CHECK constraint
+(`budget_rules_one_target_check`) so a half-filled form cannot create an
+ambiguous row.
+
+### Precedence
+
+1. Exact amount.
+2. Merchant contains.
+3. Category - but your own category override wins over Plaid's suggestion.
+4. The catch-all bucket.
+
+### Saving a rule applies it to history
+
+The sync-time engine (`applyBudgetRules`) only fills in transactions with **no**
+assignment, which is what makes a manual assignment survive later syncs. That is
+also why a new rule used to look broken: every transaction it matched had already
+been assigned.
+
+Saving a rule therefore applies it to every matching transaction, overwriting
+existing assignments, and the response reports `moved` and `matched` so the page
+can say what happened. A rule that silently matched nothing would be
+indistinguishable from a working one.
+
+The one thing it does **not** do is create a rule from a per-transaction
+reassignment; those remain one-off.
+
+### Loan rules
+
+A rule aimed at a loan tags matching outgoing transactions as payments, creating
+`loan_payments` rows. Backfill runs in **ascending date order** on purpose: each
+insert advances the loan's accrual cursor, so applying newest-first would charge
+a year of interest against the first payment and none against the rest.
+
+Runs after a sync (`applyLoanRules`), non-fatally and separately from bucket
+routing, and skips transactions that already have a payment.
+
+## Manual loans
+
+Debt Plaid cannot see, like a car loan from a credit union. `loans` holds the
+loan; `loan_payments` is the ledger of tagged transactions paying it down.
+Separate from `liabilities`, which is pinned 1:1 to a synced account and whose
+balance belongs to Plaid.
+
+Add one on **Accounts → Manual loans**: name, amount borrowed, APR, and an
+optional monthly payment. Payments are recorded by rule, not entered one at a
+time: see [Rules](#rules) above. Each matched transaction becomes a payment.
+
+### Interest
+
+Simple interest on the outstanding balance, accruing daily at APR/365 from the
+last accrual date. Actual/365 rather than a whole monthly step, because payments
+get tagged whenever you get round to it and a fixed step would over- or
+under-charge depending on when the tag lands. So a $600 payment on a $25,000 loan
+at 5.9% after a month is about $121 interest and $479 of principal — the payment
+does **not** retire $600 of debt.
+
+A payment smaller than the interest it accrues produces a negative principal and
+the balance grows. That is shown rather than hidden, because reporting it as
+progress would make a bad loan look healthy.
+
+### The balance is maintained by a trigger
+
+`loans.balance` is authoritative and user-editable (click the figure to correct
+it — useful for a lender adjustment or a payment made outside the app). But
+tagging a transaction writes a `loan_payments` row, and a database trigger moves
+the balance: `balance -= principal` on insert, `+= principal` on delete.
+
+This lives in the database on purpose. Sync deletes transaction rows that Plaid
+reports as gone, so a tagged payment can vanish without the app asking. An
+API-layer adjustment would never see it happen and the loan would drift upward
+forever. `accrued_from` is stored on each payment so un-tagging also rewinds the
+accrual cursor; otherwise the reverted stretch of interest would never be
+counted again. See `drizzle/0004_motionless_dark_beast.sql`.
+
+Consequences worth knowing:
+
+- Tagging a transaction to a second loan fails; `loan_payments.transaction_id`
+  is unique. Un-tag first.
+- Only outgoing transactions can be tagged. Plaid signs are positive for money
+  out, and a loan payment is money out.
+- Deleting a loan deletes its payment history with it.
+
+The interest split on each payment is **stored, not recomputed**, so history stays
+truthful after you correct the balance by hand.
+
+Arithmetic lives in `src/lib/loan-math.ts` as pure functions, tested in
+`tests/loan-math.test.mts`. API: `GET|POST /api/loans`, `PUT|DELETE
+/api/loans?id=`.
+
 ## Net worth
 
 Assets minus liabilities across checking/savings, credit cards, loans,
-investments and manual accounts. `GET /api/cron/snapshot` writes one row per user
-per day, idempotently, guarded by `CRON_SECRET`:
+investments and manual accounts. Manual loans are counted under `loans` rather
+than `manualLiabilities`, so a car loan appears there whether or not Plaid can see
+it. `GET /api/cron/snapshot` writes one row per user per day, idempotently,
+guarded by `CRON_SECRET`:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/snapshot
@@ -383,12 +502,17 @@ Link one real account first, confirm the sync, *then* continue.
 ## Not yet built
 
 - **`/api/manual-accounts`** write routes and UI for creating manual accounts.
-  The table and the net-worth read path are done.
+  The table and the net-worth read path are done. (Manual *loans* now have both
+  — see Manual loans above — but manual assets/liabilities still do not.)
+- **A payoff date you can trust.** The projection assumes a fixed monthly
+  payment and monthly compounding steps. Real lenders vary, and a loan with a
+  payment below its monthly interest correctly reports no payoff rather than a
+  fictional one.
 - **Notes UI.** `PATCH /api/transactions/[id]` accepts `notes`; nothing calls it.
-- **"Move and remember" rules.** Reassigning a transaction in a bucket moves that
-  one transaction. It does not create a merchant rule, so a later sync routes new
-  matching transactions by category again. Rocket Money's equivalent applies the
-  change to all future matches.
+- **Per-transaction overrides.** A rule that now matches a transaction you have
+  already re-assigned by hand will overwrite that choice, because saving a rule
+  deliberately applies it to history. There is no per-transaction "leave this
+  alone" flag.
 - **Budget basics detection.** Budget Basics is currently just a grouping you
   assign rows to; nothing identifies your recurring bills and pre-seeds them
   there. That needs a recurring-charge detector.

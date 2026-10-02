@@ -44,7 +44,7 @@ export default async function DashboardPage() {
             href="/accounts"
             className="mt-4 inline-block rounded-md bg-neutral-900 px-4 py-2.5 font-medium text-white dark:bg-white dark:text-neutral-900"
           >
-            Link an account
+            Link an institution
           </a>
         </section>
       ) : (

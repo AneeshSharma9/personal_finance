@@ -23,6 +23,7 @@ export const NAV_ITEMS = [
     icon: ListIcon,
   },
   { href: "/budgets", label: "Budgets", full: "Budgets", icon: PieIcon },
+  { href: "/rules", label: "Rules", full: "Rules", icon: RuleIcon },
   { href: "/net-worth", label: "Worth", full: "Net worth", icon: TrendIcon },
 ] as const;
 
@@ -67,7 +68,7 @@ export function MobileNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-neutral-200 bg-white/95 backdrop-blur md:hidden dark:border-neutral-800 dark:bg-neutral-950/95"
+      className="fixed inset-x-0 bottom-0 z-20 border-t border-neutral-200 bg-white/95 backdrop-blur md:hidden dark:border-neutral-700 dark:bg-neutral-900/95"
       // env() keeps the bar clear of the iPhone home indicator.
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
@@ -103,6 +104,29 @@ function stroke(active?: boolean) {
   return active
     ? "stroke-neutral-900 dark:stroke-white"
     : "stroke-current";
+}
+
+/**
+ * A funnel: rules decide where transactions go.
+ *
+ * `stroke="currentColor"` is required. These svgs set fill="none", and with no
+ * stroke attribute the shapes paint nothing at all rather than a wrong colour.
+ */
+function RuleIcon({ active }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-5 w-5 shrink-0 ${stroke(active)}`}
+      aria-hidden
+    >
+      <path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" />
+    </svg>
+  );
 }
 
 function HomeIcon({ active }: IconProps) {

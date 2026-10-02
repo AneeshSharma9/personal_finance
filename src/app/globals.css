@@ -19,7 +19,16 @@
 }
 
 .dark {
-  --background: #0a0a0a;
+  /*
+   * Not #0a0a0a. Near-black against #ededed text is roughly 18:1 contrast, which
+   * is harsh to read for a page you stare at. #171717 is neutral-900 and keeps
+   * the text comfortably legible while reading as dark rather than as a void.
+   *
+   * The surface tier moves with it: inputs and table headers sat at #171717
+   * (neutral-900), so leaving them here would have made every field invisible
+   * against the background. They are now neutral-800 in the markup.
+   */
+  --background: #171717;
   --foreground: #ededed;
 }
 
@@ -28,6 +37,44 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /*
+   * Toast entrance: rises from below while fading in. Declared here so
+   * `animate-toast-up` becomes a real utility. Timed to finish well inside the
+   * 4s dismissal so the hold is still what the eye reads.
+   */
+  --animate-toast-up: toast-up 0.22s ease-out;
+
+  /*
+   * Toast exit: the mirror image, sinking back down as it fades. Slightly
+   * quicker than the entrance so dismissal feels responsive. EXIT_MS in
+   * toast.tsx must stay in step with this duration.
+   */
+  --animate-toast-down: toast-down 0.18s ease-in;
+}
+
+@keyframes toast-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-down {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
 }
 
 body {
@@ -36,4 +83,18 @@ body {
   /* Use the fonts loaded in layout.tsx. This was Arial, so Geist was fetched on
      every page load and then ignored. */
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Browsers give <button> `cursor: default` while <a href> is a pointer, so a
+ * button reads as inert on hover even though it is the primary control on most
+ * of this app. Tailwind's preflight does not correct it.
+ *
+ * Set once here rather than adding `cursor-pointer` to all thirty buttons, and
+ * to every future one. `:not(:disabled)` keeps the existing
+ * `disabled:cursor-not-allowed` utilities working on disabled controls.
+ */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
 }
