@@ -29,9 +29,15 @@ function createPool() {
   }
 
   return postgres(url, {
-    // Serverless (Vercel) reuses warm containers; keep the pool small so we
-    // don't exhaust Supabase's connection limit.
-    max: process.env.NODE_ENV === "production" ? 5 : 10,
+    /*
+     * Kept small deliberately. More than one pool exists per running server -
+     * the app bundle and the SSR bundle each get their own module registry, so
+     * the globalThis cache above does not dedupe across them. With 10 each, two
+     * servers meant 20 connections and the session pooler refused them all.
+     * Against the transaction pooler this is no longer a hard cap, but there is
+     * no reason to hold idle backend connections.
+     */
+    max: 4,
     // Supabase's pooled connections go through pgbouncer in transaction mode,
     // which does not support prepared statements.
     prepare: false,
