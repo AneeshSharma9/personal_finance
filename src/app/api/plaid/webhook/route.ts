@@ -62,7 +62,26 @@ export async function POST(request: Request) {
         break;
 
       case "ITEM":
-        await handleItemWebhook(body);
+        /*
+         * Plaid detected an account it has not been given access to yet - the
+         * newly-issued Capital One card. Only a Link update-mode run can grant
+         * it, so there is nothing to sync automatically; refreshing here would
+         * just re-fetch the accounts we already have. Logged so the case is
+         * visible in the deployment logs.
+         *
+         * Do NOT respond by creating a new Item: /item/remove does not free a
+         * Trial-plan slot, so re-linking would spend a permanent one.
+         */
+        if (body.webhook_code === "NEW_ACCOUNTS_AVAILABLE") {
+          const item = await findItemByPlaidId(body.item_id);
+          console.log(
+            `[plaid-webhook] new accounts available at ` +
+              `${item?.institutionName ?? body.item_id}; needs a Link ` +
+              "update-mode run to grant access",
+          );
+        } else {
+          await handleItemWebhook(body);
+        }
         break;
 
       case "INVESTMENTS":

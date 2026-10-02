@@ -12,7 +12,11 @@ import {
   getTransactionCountsByAccount,
 } from "@/lib/queries";
 import { ManualLoans } from "@/components/manual-loans";
-import { PlaidLinkButton, ReauthButton } from "@/components/plaid-link-button";
+import {
+  AddAccountButton,
+  PlaidLinkButton,
+  ReauthButton,
+} from "@/components/plaid-link-button";
 import { StatusBadge } from "@/components/status-badge";
 import { SyncButton } from "@/components/sync-button";
 import {
@@ -115,6 +119,11 @@ export default async function AccountsPage() {
 
                   <div className="flex shrink-0 items-center gap-2">
                     <StatusBadge status={item.status} />
+                    {/*
+                      Update mode, so this costs no Trial slot. Unlinking to add a
+                      card would, since /item/remove does not free a slot.
+                    */}
+                    <AddAccountButton itemId={item.id} />
                     <ReauthButton itemId={item.id} status={item.status} />
                     <UnlinkButton
                       itemId={item.id}

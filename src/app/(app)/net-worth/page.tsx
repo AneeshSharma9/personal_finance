@@ -10,6 +10,7 @@ import {
   getNetWorth,
   getNetWorthHistory,
 } from "@/lib/queries";
+import { HoldingsList } from "@/components/holdings-list";
 import { NetWorthChart } from "@/components/net-worth-chart";
 
 export const metadata: Metadata = { title: "Net worth · Finance" };
@@ -70,6 +71,11 @@ export default async function NetWorthPage() {
             label="Investments (holdings value)"
             value={netWorth.investments}
           />
+          {/*
+            Just the total here. Holdings are listed per account in the Holdings
+            section further down, so repeating the same split in both places is
+            noise rather than information.
+          */}
           <Row label="Credit cards" value={netWorth.creditCards} negative />
           <Row label="Loans" value={netWorth.loans} negative />
       {/*
@@ -118,36 +124,7 @@ export default async function NetWorthPage() {
         </section>
       ) : null}
 
-      {holdings.length > 0 ? (
-        <section>
-          <h2 className="mb-2 text-sm font-medium text-neutral-500">
-            Holdings
-          </h2>
-          <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {holdings.map((holding) => (
-              <li
-                key={holding.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">
-                    {holding.tickerSymbol ?? holding.securityName}
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    {holding.accountName} · {holding.quantity} units
-                    {holding.securityType ? ` · ${holding.securityType}` : ""}
-                  </p>
-                </div>
-                <p className="shrink-0 tabular-nums">
-                  {holding.institutionValue !== null
-                    ? formatCurrency(holding.institutionValue)
-                    : "-"}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      {holdings.length > 0 ? <HoldingsList holdings={holdings} /> : null}
 
       {manual.length > 0 ? (
         <section>

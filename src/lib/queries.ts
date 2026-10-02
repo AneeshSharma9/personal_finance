@@ -1072,6 +1072,8 @@ export async function getNetWorth(userId: string): Promise<NetWorthBreakdown> {
       (investmentsByAccount.get(holding.accountId) ?? 0) + value,
     );
   }
+  // Still accumulated per account before being summed: two accounts can hold the
+  // same security, and the grouped view below reads the same rows.
   for (const value of investmentsByAccount.values()) {
     breakdown.investments += value;
   }

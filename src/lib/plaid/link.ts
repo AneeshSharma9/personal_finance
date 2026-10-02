@@ -119,11 +119,32 @@ async function updateModeLinkToken(
 
   const accessToken = decryptToken(item.accessTokenEncrypted);
 
-  // Plaid requires the raw access token (not our encrypted copy) to put an
-  // existing Item into update mode.
+  /*
+   * `products` is deliberately NOT forwarded from `base`.
+   *
+   * Plaid documents that adding product consent in update mode goes through
+   * `additional_consented_products`, not `products`. Re-sending the full
+   * `products` array on an Item that already has them is the wrong shape for
+   * this call, so the new-mode fields are dropped rather than spread in.
+   *
+   * `account_selection_enabled` is what turns this into "add the card I just got
+   * from Capital One" rather than just "fix my password". Without it Plaid shows
+   * no account picker and there is no way to grant access to a newly issued
+   * account. This is the path that costs zero Trial slots - unlinking and
+   * re-linking would, since /item/remove does not free a slot on Trial.
+   *
+   * US/CA only: Plaid has no update-mode account selection in the UK/EU, where
+   * the documented workaround is to remove the Item and create a new one.
+   */
   return {
-    ...base,
+    user: base.user,
+    client_name: base.client_name,
+    language: base.language,
+    country_codes: base.country_codes,
+    webhook: base.webhook,
+    ...(base.redirect_uri ? { redirect_uri: base.redirect_uri } : {}),
     access_token: accessToken,
+    update: { account_selection_enabled: true },
   } as LinkTokenCreateRequest;
 }
 

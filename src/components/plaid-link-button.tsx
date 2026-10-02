@@ -32,10 +32,13 @@ export function PlaidLinkButton({
   itemId,
   buttonLabel = "Link an institution",
   className,
+  variant = "solid",
 }: {
   itemId?: number;
   buttonLabel?: string;
   className?: string;
+  /** `subtle` sits inline in a list of controls instead of acting as the CTA. */
+  variant?: "solid" | "subtle";
 }) {
   const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
@@ -62,6 +65,34 @@ export function PlaidLinkButton({
 
   const onSuccess = useCallback<PlaidLinkOnSuccess>(
     async (public_token, metadata) => {
+      /*
+       * Update mode hands back no public_token: the existing access_token is
+       * reused, and the user has only granted access to another account. There
+       * is nothing to exchange, so calling /api/plaid/exchange would fail its
+       * own validation with "public_token is required".
+       *
+       * Instead pull /accounts/get so the newly shared card actually lands in
+       * the database, then reload as the new-mode path does.
+       */
+      if (itemId) {
+        setState({ phase: "exchanging" });
+        const response = await fetch("/api/plaid/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemId }),
+        });
+        if (!response.ok) {
+          const data = (await response.json()) as { error?: string };
+          setState({
+            phase: "error",
+            message: data.error ?? "Could not refresh that institution.",
+          });
+          return;
+        }
+        window.location.reload();
+        return;
+      }
+
       setState({ phase: "exchanging" });
 
       try {
@@ -101,7 +132,8 @@ export function PlaidLinkButton({
         });
       }
     },
-    [],
+    // itemId selects the update-mode branch above, so it is a real dependency.
+    [itemId],
   );
 
   const config: PlaidLinkOptions = {
@@ -153,6 +185,12 @@ export function PlaidLinkButton({
         ? "Saving..."
         : buttonLabel;
 
+  /*
+   * Update mode is used for two different jobs: repairing a login, and adding a
+   * newly issued account. Both return no public_token, so the button says which
+   * it is rather than showing a bare "Link an account".
+   */
+
   return (
     <div className={className}>
       {/*
@@ -165,7 +203,11 @@ export function PlaidLinkButton({
         type="button"
         onClick={handleClick}
         disabled={state.phase === "exchanging"}
-        className="rounded-md border border-transparent bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className={
+          variant === "subtle"
+            ? "rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            : "rounded-md border border-transparent bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        }
       >
         {label}
       </button>
@@ -197,4 +239,27 @@ export function ReauthButton({
   }
 
   return <PlaidLinkButton itemId={itemId} buttonLabel="Fix login" />;
+}
+
+/**
+ * Grant Plaid access to another account at an institution already linked.
+ *
+ * Uses Link **update mode**, so no new Item is created and no Trial-plan slot is
+ * spent. That matters because `/item/remove` does not free a slot on the Trial
+ * plan: unlinking and re-linking to pick up a new card would cost a permanent
+ * slot out of ten for an identical connection.
+ *
+ * Sends `update.account_selection_enabled`, which is what makes Plaid show the
+ * account picker. Without it, update mode can only repair a login.
+ *
+ * US/CA only - Plaid has no update-mode account selection in the UK/EU.
+ */
+export function AddAccountButton({ itemId }: { itemId: number }) {
+  return (
+    <PlaidLinkButton
+      itemId={itemId}
+      buttonLabel="Add an account"
+      variant="subtle"
+    />
+  );
 }
