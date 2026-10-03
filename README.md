@@ -545,6 +545,40 @@ not move the other bars.
 The breakdown comes from `getCategoryBreakdownByBucket`, summed per (bucket,
 category) in SQL, and every row sums exactly to its bucket's total.
 
+### Opening a bucket from the cash flow
+
+Every row in **Where it went** links to its bucket, carrying the diagram's own
+window rather than a month: `/budgets/<id>?from=2026-01-01&to=2026-10-31`. The
+link is stretched over the row, because the labels are short and a link the width
+of "Travel" is not a target.
+
+The bucket page takes two kinds of window. `?year=&month=` is a single month, which
+is what the budgets page and its own prev/next link to. `?from=&to=` is an arbitrary
+range, which is what a year-to-date figure needs — before this, a bucket was
+reachable for exactly one month at a time and a YTD total could not be opened up at
+all. A malformed range falls back to the month rather than erroring, since
+`?year=` on its own is a reasonable thing to type. In range mode the header shows
+the transaction count and a link back to the cash flow, and the budget is scaled by
+the **months the range touches** — January 1 to September 30 is 273 days but nine
+monthly budgets were in play, and comparing against the wrong multiple is worse than
+no comparison.
+
+`parseDateRange` rejects impossible dates rather than passing them on: Postgres
+reads `2026-02-31` as March 3rd and would quietly show the wrong rows.
+
+### The year-to-date window ends where its month count does
+
+`cashFlowWindow` returns `to: <year>-12-31` for a year to date but `months` set to
+the number of months elapsed, which mid-year disagree — twelve months of budget
+against ten months of spend.
+
+That was harmless while the cash flow page was the only consumer, because no
+transaction is dated in the future and the wider `to` returned the same rows. It
+stopped being harmless once the bucket page accepted this window and scaled its own
+budget by the months the range touches: the same bucket would have shown "ten months
+budgeted" on one page and "twelve" on the other. `to` now ends at the last day of
+the elapsed month, so the two agree by construction. A finished year is unchanged.
+
 ### Changing a transaction's category
 
 Click a category on the transactions page to change it. That writes

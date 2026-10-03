@@ -15,6 +15,8 @@ export type FlowBucket = {
   id: string;
   label: string;
   kind: "income" | "spending";
+  /** The budget row this came from, for linking to it. Absent on synthetic rows. */
+  budgetId?: number;
   /** Actual money in or out, always positive. */
   amount: number;
   /** Budgeted for the same window, for context only - never a flow. */
@@ -30,6 +32,8 @@ export type SankeyNodeSpec = {
   id: string;
   label: string;
   kind: "income" | "deficit" | "spending" | "leftover";
+  /** Carried through so the table can link a bucket to its transactions. */
+  budgetId?: number;
   amount: number;
   /** Set on spending nodes, to show plan vs actual in the tooltip. */
   budgeted?: number;
@@ -117,7 +121,13 @@ export function buildCashFlowGraph({
   const links: SankeyLinkSpec[] = [];
 
   for (const row of incomeRows) {
-    nodes.push({ id: row.id, label: row.label, kind: "income", amount: row.amount });
+    nodes.push({
+      id: row.id,
+      label: row.label,
+      kind: "income",
+      budgetId: row.budgetId,
+      amount: row.amount,
+    });
   }
 
   /*
@@ -139,6 +149,7 @@ export function buildCashFlowGraph({
       id: row.id,
       label: row.label,
       kind: "spending",
+      budgetId: row.budgetId,
       amount: row.amount,
       budgeted: row.budgeted,
       breakdown: row.breakdown,
@@ -443,11 +454,27 @@ export function cashFlowWindow({
 
   const elapsed =
     year < currentYear ? 12 : year === currentYear ? currentMonth : 0;
+  const months = Math.max(Math.min(elapsed, 12), 1);
+
+  /*
+   * `to` ends at the last day of the elapsed month, not December 31.
+   *
+   * Those disagree mid-year, and the disagreement was harmless while this page
+   * was the only consumer - no transaction is dated in the future, so a wider `to`
+   * returned the same rows. It stopped being harmless when the bucket page started
+   * accepting this window and scaling its own budget by the months the range
+   * touches: Jan 1 - Dec 31 spans twelve monthly budgets while `months` says ten,
+   * so the same bucket would show "ten months budgeted" here and "twelve" there.
+   *
+   * Ending the window where the month count ends makes the two agree by
+   * construction. A finished year is unaffected - twelve months, December 31.
+   */
+  const lastDay = new Date(Date.UTC(year, months, 0)).getUTCDate();
 
   return {
     from: `${year}-01-01`,
-    to: `${year}-12-31`,
-    months: Math.max(Math.min(elapsed, 12), 1),
+    to: `${year}-${String(months).padStart(2, "0")}-${lastDay}`,
+    months,
     label: `${year} to date`,
   };
 }

@@ -156,6 +156,83 @@ export function monthRange(
   };
 }
 
+const MONTH_NAMES_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** A resolved from/to window, with the month count needed to scale a budget. */
+export type DateRange = {
+  from: string;
+  to: string;
+  /**
+   * How many calendar months the window touches.
+   *
+   * Not derivable from the day span, and not the same thing: January 1 to
+   * September 30 is 273 days but ten monthly budgets were in play, and a budget
+   * compared against the wrong multiple is worse than no comparison at all.
+   */
+  months: number;
+  label: string;
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse a `?from=&to=` window.
+ *
+ * Returns null for anything malformed rather than throwing or silently falling
+ * back, because the caller has a sensible single-month default to use and a
+ * hand-edited URL should not be able to ask for the year 10000.
+ *
+ * Both ends are real calendar dates - "2026-02-31" is rejected, since Postgres
+ * would treat it as March 3rd and quietly show the wrong rows.
+ */
+export function parseDateRange(
+  rawFrom: unknown,
+  rawTo: unknown,
+): DateRange | null {
+  if (typeof rawFrom !== "string" || typeof rawTo !== "string") return null;
+  if (!ISO_DATE.test(rawFrom) || !ISO_DATE.test(rawTo)) return null;
+
+  const from = new Date(`${rawFrom}T00:00:00Z`);
+  const to = new Date(`${rawTo}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  // Round-trips through the formatter, so an impossible date is caught here
+  // rather than becoming a different day in the query.
+  if (from.toISOString().slice(0, 10) !== rawFrom) return null;
+  if (to.toISOString().slice(0, 10) !== rawTo) return null;
+  if (from.getTime() > to.getTime()) return null;
+
+  const months =
+    (to.getUTCFullYear() - from.getUTCFullYear()) * 12 +
+    (to.getUTCMonth() - from.getUTCMonth()) +
+    1;
+
+  return {
+    from: rawFrom,
+    to: rawTo,
+    months,
+    label: rangeLabel(from, to),
+  };
+}
+
+/** "March 2026", or "January - September 2026" when the window spans months. */
+function rangeLabel(from: Date, to: Date): string {
+  const sameMonth =
+    from.getUTCFullYear() === to.getUTCFullYear() &&
+    from.getUTCMonth() === to.getUTCMonth();
+  if (sameMonth) {
+    return `${MONTH_NAMES_LONG[from.getUTCMonth()]} ${from.getUTCFullYear()}`;
+  }
+
+  const sameYear = from.getUTCFullYear() === to.getUTCFullYear();
+  const fromPart = `${MONTH_NAMES_LONG[from.getUTCMonth()]}${
+    sameYear ? "" : ` ${from.getUTCFullYear()}`
+  }`;
+  return `${fromPart} \u2013 ${MONTH_NAMES_LONG[to.getUTCMonth()]} ${to.getUTCFullYear()}`;
+}
+
 /** Turn "FOO_BAR" or "foo bar" into "Foo Bar" for display. */
 export function humanizeCategory(category: string): string {
   return category

@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
 import { humanizeCategory } from "@/lib/categories";
-import { formatCurrency, monthRange } from "@/lib/format";
+import { formatCurrency, monthRange, parseDateRange } from "@/lib/format";
 import {
   getBudgetForUser,
   getLatestTransactionMonth,
@@ -48,7 +48,25 @@ export default async function BucketPage({
   const month =
     Number.isInteger(rawMonth) && rawMonth >= 1 ? rawMonth - 1 : fallback.month;
 
-  const { from, to } = monthRange(year, month);
+  /*
+   * Two ways in.
+   *
+   * `?year=&month=` is a single month, which is what the budgets page and
+   * MonthNav link to. `?from=&to=` is an arbitrary window, which is what the cash
+   * flow page links to: it can be showing a year to date, and "all of this
+   * bucket's transactions" has to mean the same nine months the diagram did. There
+   * was no way to express that before, so every bucket was reachable for exactly
+   * one month at a time and a YTD figure could not be opened up at all.
+   *
+   * A malformed or absent range falls back to the month rather than erroring - the
+   * page is browsable by hand and ?year= alone is a reasonable thing to type.
+   */
+  const range = parseDateRange(
+    single(query.from),
+    single(query.to),
+  );
+  const { from, to } = range ?? monthRange(year, month);
+  const months = range?.months ?? 1;
 
   const transactions = await getTransactionsInBucket(
     user.id,
@@ -79,28 +97,46 @@ export default async function BucketPage({
           : Math.max(0, t.amount)),
     0,
   );
-  const monthLabel = new Date(Date.UTC(year, month, 1)).toLocaleDateString(
-    "en-US",
-    { month: "long", year: "numeric", timeZone: "UTC" },
-  );
+  const monthLabel =
+    range?.label ??
+    new Date(Date.UTC(year, month, 1)).toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+
+  /*
+   * A budget is a monthly figure, so a window covering several months needs the
+   * figure scaled - and scaled by the months the window *touches*, not by its
+   * length in days. January 1 to September 30 is 273 days but ten budgets were in
+   * play. `monthsInRange` counts calendar months, which is what keeps this equal
+   * to the figure on the cash flow page for the same window.
+   */
+  const budgeted = Number(budget.monthlyLimit) * months;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <header>
         <Link
-          href={`/budgets?year=${year}&month=${month + 1}`}
+          href={
+            range
+              ? `/budgets/cash-flow?year=${year}&month=${month + 1}`
+              : `/budgets?year=${year}&month=${month + 1}`
+          }
           className="text-xs text-neutral-500 underline"
         >
-          &larr; Budgets
+          {range ? "\u2190 Cash flow" : "&larr; Budgets"}
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">{budget.name}</h1>
         <p className="text-sm text-neutral-500">
-          {monthLabel} &middot; {formatCurrency(Number(budget.monthlyLimit))}{" "}
-          budgeted &middot;{" "}
+          {monthLabel} &middot; {formatCurrency(budgeted)} budgeted
+          {months > 1 ? ` (${months} months)` : ""} &middot;{" "}
           <strong>
             {formatCurrency(total)}{" "}
             {budget.budgetKind === "earning" ? "received" : "spent"}
-          </strong>
+          </strong>{" "}
+          across {transactions.length}{" "}
+          {transactions.length === 1 ? "transaction" : "transactions"}
         </p>
       </header>
 
@@ -108,7 +144,18 @@ export default async function BucketPage({
         Keep the month in context while inspecting a bucket, so stepping through
         months does not drop you back to the budgets index.
       */}
-      <MonthNav year={year} month={month} bucketId={budget.id} />
+      {range ? (
+        <p className="text-xs text-neutral-500">
+          <Link
+            href={`/budgets/${budget.id}?year=${year}&month=${month + 1}`}
+            className="underline underline-offset-2"
+          >
+            Switch to {monthLabel} only
+          </Link>
+        </p>
+      ) : (
+        <MonthNav year={year} month={month} bucketId={budget.id} />
+      )}
 
       {budget.categories.length > 0 ? (
         <p className="text-xs text-neutral-500">

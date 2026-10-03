@@ -827,6 +827,12 @@ export type CashFlowBucket = {
   id: string;
   label: string;
   kind: "income" | "spending";
+  /**
+   * The budget row behind this node, so the UI can link to it. The string `id` is
+   * only ever `"bucket:" + budgetId`, and parsing that back out at the call site
+   * would work right up until something else needed an id.
+   */
+  budgetId: number;
   amount: number;
   /** Budgeted for the same window. Context for the tooltip, never a flow. */
   budgeted: number;
@@ -967,6 +973,7 @@ export async function getCashFlow(
       id: `bucket:${bucket.id}`,
       label: bucket.name,
       kind: isEarning ? "income" : "spending",
+      budgetId: bucket.id,
       amount,
       // An earnings bucket's limit is a target, not a cost, and spending buckets
       // are the only ones a limit means anything for.

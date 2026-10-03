@@ -69,6 +69,17 @@ export default async function CashFlowPage({
 
   const { income, spending, remaining, unassigned } = graph.totals;
 
+  /*
+   * Carries the exact window this diagram is showing, rather than just the month.
+   *
+   * A year-to-date figure that cannot be opened is a dead end: you can see that
+   * Rent And Utilities took $10,525 across the year and have no way to look at the
+   * transactions behind it, because the bucket page only ever took ?year=&month=.
+   * So the link passes ?from=&to= and the bucket page honours it - which means
+   * "all of this bucket's transactions" means the same nine months the ribbon did.
+   */
+  const rangeSuffix = `from=${window.from}&to=${window.to}`;
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -147,12 +158,30 @@ export default async function CashFlowPage({
               </tr>
             </thead>
             <tbody>
+              {/*
+                Rows are `relative` so the stretched link inside each one can cover
+                the row. Without it the ::after positions against the page and
+                swallows clicks on every other row.
+              */}
               {graph.nodes
                 .filter((node) => node.kind === "spending")
                 .map((node) => (
-                  <tr key={node.id} className="border-b border-neutral-100 dark:border-neutral-800/60">
+                  <tr
+                    key={node.id}
+                    className="relative border-b border-neutral-100 dark:border-neutral-800/60"
+                  >
                     <th scope="row" className="py-1.5 text-left font-normal">
-                      {node.label}
+                      {node.budgetId === undefined ? (
+                        node.label
+                      ) : (
+                        <Link
+                          href={`/budgets/${node.budgetId}?${rangeSuffix}`}
+                          title={`Every transaction in ${node.label}, ${window.label}`}
+                          className="after:absolute after:inset-0 after:content-[''] hover:underline underline-offset-2"
+                        >
+                          {node.label}
+                        </Link>
+                      )}
                     </th>
                     <td className="tabular-nums py-1.5 text-right">
                       {formatCurrency(node.amount)}
