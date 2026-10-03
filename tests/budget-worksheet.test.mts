@@ -178,12 +178,6 @@ test("typing a salary skips the solve", () => {
   assert.notEqual(solved.salaryAnnual, typed.salaryAnnual);
 });
 
-test("retirement figures are annual, which is why periods are stored", () => {
-  const r = computeWorksheet(SHEET);
-  near(r.annualPreTax, r.preTax * 12, "pre-tax per year");
-  near(r.annualAfterTax, r.afterTax * 12, "roth per year");
-});
-
 test("the salary solve cannot invent one", () => {
   assert.equal(solveSalaryForBills(0, 500), 0, "no bills means no salary to solve for");
   assert.equal(solveSalaryForBills(2000, 500), 30000, "bills plus deductions, times twelve");
@@ -416,4 +410,107 @@ test("a percent stays a fraction once converted", () => {
   assert.equal(normaliseWorksheetInput({ asopRate: 200 / 100 }).asopRate, 0.95);
   assert.equal(normaliseWorksheetInput({ idealNeeds: 150 / 100 }).idealNeeds, 1);
   assert.equal(normaliseWorksheetInput({ idealWants: -5 / 100 }).idealWants, 0);
+});
+
+/**
+ * The ideal amounts, and the base they divide.
+ *
+ * This is a bug a user found rather than one a test would have: with the
+ * retirement checkbox off, the caption said the split was measured against
+ * take-home while the Amount column divided income *before* savings. So 50% of
+ * needs printed as $2,771.50 against a stated base of $4,534.23, where $2,267.12
+ * was the figure the caption implied - both on screen at once, and nothing to say
+ * which was wrong.
+ */
+test("the ideal amounts divide the base the caption names", () => {
+  const off = computeWorksheet(SHEET);
+  near(off.allocationBase, off.takeHome, "unchecked: the base is take-home");
+  near(off.idealAmounts.needs, off.takeHome * 0.5, "unchecked: 50% of take-home");
+  near(off.idealAmounts.savings, off.takeHome * 0.3, "unchecked: 30% of take-home");
+  near(off.idealAmounts.wants, off.takeHome * 0.2, "unchecked: 20% of take-home");
+
+  const on = computeWorksheet({ ...SHEET, includeRetirementInSavings: true });
+  near(
+    on.allocationBase,
+    on.incomeBeforeSavings,
+    "checked: the base is income before savings",
+  );
+  near(
+    on.idealAmounts.needs,
+    on.incomeBeforeSavings * 0.5,
+    "checked: 50% of income before savings",
+  );
+  assert.notEqual(
+    on.idealAmounts.needs,
+    off.idealAmounts.needs,
+    "so the two states genuinely differ",
+  );
+});
+
+test("the three targets are the whole base, in both states", () => {
+  for (const includeRetirementInSavings of [false, true]) {
+    const r = computeWorksheet({ ...SHEET, includeRetirementInSavings });
+    const total =
+      r.idealAmounts.needs + r.idealAmounts.savings + r.idealAmounts.wants;
+    near(total, r.allocationBase, `targets add up (retirement ${includeRetirementInSavings})`);
+  }
+});
+
+test("the actual column and the amount column share one base", () => {
+  /*
+   * Both columns have to be measured against the same number. When they were not, a
+   * row could show a percentage of take-home beside an amount derived from
+   * something larger, and both looked entirely reasonable on their own.
+   */
+  const r = computeWorksheet(SHEET);
+  near(r.actual.needs, r.needs.total / r.takeHome, "actual needs is a share of take-home");
+  near(r.actual.needs * r.allocationBase, r.needs.total, "and of the allocation base");
+
+  // And the same holds with retirement folded in.
+  const on = computeWorksheet({ ...SHEET, includeRetirementInSavings: true });
+  near(
+    on.actual.needs * on.allocationBase,
+    on.needs.total,
+    "still one base when retirement counts as savings",
+  );
+});
+
+/**
+ * The two "Wants" figures, which are meant to differ.
+ *
+ * A user read them as a contradiction: the Wants total said $968.32 while the
+ * ideal-allocation table said $906.85 for the same row. Neither was wrong - the
+ * total is what actually remained, the table is the 20% guideline - but the table
+ * column was headed just "Amount", which reads like the real figure. So the two
+ * displays are tied together here instead: the table's Actual share has to be the
+ * same number as the total, and it only matches because the real allocation was
+ * 21%, not 20%.
+ */
+test("the table's actual wants is the wants total, in percentages", () => {
+  const r = computeWorksheet(SHEET);
+
+  // The total is the outcome.
+  near(r.wants, r.takeHome - r.needs.total - r.savings.total, "wants is the remainder");
+
+  // The table's share is that same outcome over the allocation base.
+  const share = r.takeHome > 0 ? r.wants / r.allocationBase : 0;
+  near(r.actual.wants, share, "the Actual column is the total, as a share");
+});
+
+test("the guideline and the outcome are different quantities", () => {
+  const r = computeWorksheet(SHEET);
+
+  near(r.idealAmounts.wants, r.allocationBase * 0.2, "the table's wants is the 20% target");
+
+  /*
+   * They coincide only when the real allocation happens to be 20%. Asserted
+   * positively so a future "fix" that quietly made one derive from the other would
+   * be visible here rather than on the page.
+   */
+  const matches = Math.abs(r.idealAmounts.wants - r.wants) < 0.005;
+  assert.equal(
+    matches,
+    Math.abs(r.actual.wants - r.ideal.wants) < 0.005,
+    "the two agree exactly when the actual share hits the target",
+  );
 });

@@ -384,13 +384,23 @@ export function computeWorksheet(input: WorksheetInput): WorksheetResult {
   const incomeBeforeSavings = takeHome + preTax + afterTax;
 
   /*
-   * Actual and ideal are both fractions of income, but of different things, and
-   * conflating them is how a worksheet ends up arguing with itself:
+   * One base for the whole comparison, so the actual shares, the ideal amounts and
+   * the caption under the table cannot disagree with each other.
    *
-   *  - `actual` divides take-home, because that is the pot the three actually
-   *    compete for and it is what the sheet's C column shows.
-   *  - `idealAmounts` divides income *before* savings, because the 50/30/20 rule
-   *    is written against what you earn, not what survives the 401k.
+   * The base follows the checkbox, because the two answers are both defensible and
+   * mixing them is worse than either:
+   *
+   *  - Goals only (the default, and what the spreadsheet did): take-home. The
+   *    retirement contributions already left before this pot existed, so counting
+   *    them would be measuring a pot that never held them.
+   *  - With retirement: income before savings, so the contributions are inside the
+   *    savings share rather than outside the comparison entirely.
+   *
+   * This used to divide `idealAmounts` by income-before-savings unconditionally
+   * while the caption and the actual column used take-home. So with the checkbox
+   * off, 50% of needs was printed as 50% of a *larger* number than the one the
+   * caption named: $2,771.50 against a stated base of $4,534.23, where $2,267.12
+   * was the answer. The two figures were only ever a caption away from each other.
    *
    * Wants is the remainder, so the three always sum to the whole - the split is a
    * report of what happened, not another thing to reconcile.
@@ -437,9 +447,9 @@ export function computeWorksheet(input: WorksheetInput): WorksheetResult {
     actual,
     ideal,
     idealAmounts: {
-      needs: incomeBeforeSavings * ideal.needs,
-      savings: incomeBeforeSavings * ideal.savings,
-      wants: incomeBeforeSavings * ideal.wants,
+      needs: allocationBase * ideal.needs,
+      savings: allocationBase * ideal.savings,
+      wants: allocationBase * ideal.wants,
     },
     warnings,
   };

@@ -220,14 +220,32 @@ export function BudgetWorksheetForm({ saved }: { saved: WorksheetInput }) {
         <Line label="Groceries and dining" value={fields["groceriesDining"] ?? ""} onChange={set("groceriesDining")} />
         <Total label="Total needs" value={r.needs.total} sub={`${pct(r.actual.needs)} of take-home`} />
 
+        {/*
+          Labelled as what it is rather than what it is used for. This line used to
+          read "Monthly bills used to solve your gross", which described a
+          calculation that is only running when the solve checkbox is ticked - so
+          with a typed salary it introduced a number and explained it with a
+          mechanism that was switched off.
+
+          It is worth keeping either way: these four are the commitments that recur
+          regardless of the month, so they are the floor the rest of the budget has
+          to fit inside. Note it is not the same set as Total needs above, which
+          also includes utilities, wifi, car insurance and gas.
+        */}
         <div className="rounded bg-neutral-50 p-3 text-sm dark:bg-neutral-800/60">
           <p className="text-neutral-500">
-            Monthly bills used to solve your gross:{" "}
+            Fixed monthly commitments:{" "}
             <span className="tabular-nums text-neutral-900 dark:text-neutral-100">
               {formatCurrency(r.bills)}
             </span>{" "}
             — rent, renters insurance, car payment and student loans.
           </p>
+          {input.deriveGross ? (
+            <p className="mt-1 text-xs text-neutral-500">
+              Your salary is being solved from this figure, so it has to cover your
+              deductions as well: {formatCurrency(r.salaryAnnual)} a year.
+            </p>
+          ) : null}
         </div>
       </Section>
 
@@ -247,11 +265,17 @@ export function BudgetWorksheetForm({ saved }: { saved: WorksheetInput }) {
         />
       </Section>
 
+      {/*
+        The actual outcome, and marked as such: the ideal-allocation table below
+        also has a "Wants" figure, which is the 20% target rather than this. They
+        are meant to differ, and a reader should not have to work out which is
+        which.
+      */}
       <Total
         label="Wants"
         value={r.wants}
         big
-        sub="Whatever is left after needs and savings"
+        sub="Actual — what was left after needs and goals"
         tone={r.wants < 0 ? "bad" : "neutral"}
       />
 
@@ -283,7 +307,16 @@ export function BudgetWorksheetForm({ saved }: { saved: WorksheetInput }) {
               <th scope="col" className="py-1 font-normal">Share</th>
               <th scope="col" className="py-1 text-right font-normal">Target</th>
               <th scope="col" className="py-1 text-right font-normal">Actual</th>
-              <th scope="col" className="py-1 text-right font-normal">Amount</th>
+              {/*
+                "Target amount", not "Amount". These are two different quantities
+                and the short header made them look like a contradiction: this
+                column is the 50/30/20 guideline, while the Wants total further up
+                the page is what actually remained. For most people those differ -
+                21% actual against a 20% target is the whole point of the table.
+              */}
+              <th scope="col" className="py-1 text-right font-normal">
+                Target amount
+              </th>
             </tr>
           </thead>
           <tbody>
