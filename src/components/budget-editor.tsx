@@ -389,8 +389,6 @@ function BudgetTable({
             year={year}
             month={month}
             disabled={pending}
-            availableCategories={options}
-            claimedBy={claimedBy}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -485,8 +483,6 @@ function EarningsTable({
             year={year}
             month={month}
             disabled={pending}
-            availableCategories={options}
-            claimedBy={claimedBy}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -751,8 +747,6 @@ function RowEditor({
   year,
   month,
   disabled,
-  availableCategories,
-  claimedBy,
   onSave,
   onDelete,
 }: {
@@ -760,9 +754,6 @@ function RowEditor({
   year: number;
   month: number;
   disabled: boolean;
-  /** Every category present in the user's transactions, for the add picker. */
-  availableCategories: string[];
-  claimedBy: Map<string, string>;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
@@ -771,41 +762,6 @@ function RowEditor({
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
 }) {
-  /*
-   * Adding or removing a category is a normal edit, not a new-bucket form.
-   *
-   * It used to be impossible: a bucket's category could only be set at creation,
-   * and RowEditor could edit nothing but the figure. So the natural thing to want
-   * - "Weekend" starts as dining, then a month reveals it should also match
-   * entertainment - had no route at all, and the only way to get it was to delete
-   * the bucket and rebuild it, losing the budgeted amount and the manual
-   * assignments already pointing at it.
-   */
-  const [pickingCategory, setPickingCategory] = useState(false);
-
-  /**
-   * Categories this row could still take.
-   *
-   * A category already on *this* bucket is not offered, and neither is one another
-   * bucket has claimed. Sharing is not rejected - the first bucket in display order
-   * simply wins forever and the other reads $0 - so this is the only place that
-   * fact is visible.
-   */
-  const addableCategories = availableCategories.filter(
-    (value) =>
-      !row.categories.includes(value) && claimedBy.get(value) !== row.name,
-  );
-
-  function saveCategories(next: string[]) {
-    if (next.length === row.categories.length) return;
-    return onSave({
-      kind: row.kind,
-      name: row.name,
-      categories: next,
-      budgeted: row.budgeted,
-    });
-  }
-
   const [text, setText] = useState(() =>
     formatCurrencyInput(String(row.budgeted)),
   );
@@ -850,67 +806,6 @@ function RowEditor({
         >
           {row.name}
         </Link>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-          {row.categories.map((value) => (
-            <span
-              key={value}
-              className="flex max-w-40 items-center gap-1 rounded-full bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-            >
-              <span className="truncate">{humanizeCategory(value)}</span>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() =>
-                  void saveCategories(
-                    row.categories.filter((entry) => entry !== value),
-                  )
-                }
-                aria-label={`Stop matching ${humanizeCategory(value)} on ${row.name}`}
-                title={`Stop matching ${humanizeCategory(value)}`}
-                className="shrink-0 text-neutral-400 hover:text-neutral-800 disabled:opacity-50 dark:hover:text-neutral-100"
-              >
-                &times;
-              </button>
-            </span>
-          ))}
-
-          <button
-            type="button"
-            disabled={disabled || addableCategories.length === 0}
-            onClick={() => setPickingCategory((open) => !open)}
-            aria-expanded={pickingCategory}
-            title={
-              addableCategories.length === 0
-                ? "Every category is either already on this bucket or claimed by another"
-                : "Add a category this bucket matches"
-            }
-            className="rounded-full border border-dashed border-neutral-300 px-1.5 py-0.5 text-xs text-neutral-500 hover:border-neutral-400 hover:text-neutral-800 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            {pickingCategory ? "Cancel" : "+ category"}
-          </button>
-
-          {pickingCategory ? (
-            <div className="flex max-h-28 w-full flex-wrap gap-1 overflow-y-auto rounded border border-neutral-200 p-1 dark:border-neutral-800">
-              {addableCategories.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => {
-                    // Left open on purpose: a bucket usually wants two or three
-                    // categories, and reopening between each one would make the
-                    // second one a separate errand.
-                    void saveCategories([...row.categories, value]);
-                  }}
-                  title={`Also match ${humanizeCategory(value)}`}
-                  className="rounded-full border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-                >
-                  {humanizeCategory(value)}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
       </div>
 
       <input

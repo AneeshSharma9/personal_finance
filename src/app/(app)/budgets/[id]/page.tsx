@@ -2,13 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
-import { humanizeCategory } from "@/lib/categories";
 import { formatCurrency, monthRange, parseDateRange } from "@/lib/format";
 import {
   getBudgetForUser,
+  getBudgets,
+  getCategoryOptions,
   getLatestTransactionMonth,
   getTransactionsInBucket,
 } from "@/lib/queries";
+import { BucketCategories } from "@/components/bucket-categories";
 import { BucketTransactions } from "@/components/bucket-transactions";
 
 export const metadata: Metadata = { title: "Bucket · Finance" };
@@ -68,12 +70,34 @@ export default async function BucketPage({
   const { from, to } = range ?? monthRange(year, month);
   const months = range?.months ?? 1;
 
-  const transactions = await getTransactionsInBucket(
-    user.id,
-    budget.id,
-    from,
-    to,
-  );
+  const [transactions, availableCategories, allBuckets] = await Promise.all([
+    getTransactionsInBucket(user.id, budget.id, from, to),
+    getCategoryOptions(user.id),
+    getBudgets(user.id),
+  ]);
+
+  /*
+   * Which bucket already claims each category, so the picker can grey out the
+   * taken ones and say who has them.
+   *
+   * This bucket's own categories are excluded, or it would be competing with
+   * itself and every category it already matched would look unavailable. The
+   * catch-all is skipped: it is the bucket for spending nothing else claimed, so
+   * it must not claim a category or it would take a real bucket's transactions.
+   *
+   * First bucket wins, matching the engine's first-match-wins order.
+   */
+  const claimedBy: Record<string, string> = {};
+  for (const row of allBuckets) {
+    const isCatchAll =
+      row.budgetKind !== "earning" &&
+      row.categories.length === 0 &&
+      /everything\s*else|^other$/i.test(row.name);
+    if (row.id === budget.id || isCatchAll) continue;
+    for (const value of row.categories) {
+      if (claimedBy[value] === undefined) claimedBy[value] = row.name;
+    }
+  }
 
   /**
    * Total for the header, using the same sign rules as getActualsByBucket so
@@ -125,7 +149,15 @@ export default async function BucketPage({
           }
           className="text-xs text-neutral-500 underline"
         >
-          {range ? "\u2190 Cash flow" : "&larr; Budgets"}
+          {/*
+            A JS string, so the arrow needs the escape. Writing `&larr;` here
+            rendered the entity literally - "&larr; Budgets" - because JSX only
+            decodes entities in children position, and this sits inside a ternary
+            within an expression. The entity form was correct here until the two
+            branches needed to differ.
+          */}
+          {"\u2190 "}
+          {range ? "Cash flow" : "Budgets"}
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">{budget.name}</h1>
         <p className="text-sm text-neutral-500">
@@ -157,16 +189,20 @@ export default async function BucketPage({
         <MonthNav year={year} month={month} bucketId={budget.id} />
       )}
 
-      {budget.categories.length > 0 ? (
-        <p className="text-xs text-neutral-500">
-          New transactions matching{" "}
-          {budget.categories.length === 1
-            ? "this bucket's category"
-            : "any of this bucket's categories"}{" "}
-          ({budget.categories.map(humanizeCategory).join(", ")}) are routed here
-          automatically. Anything you move below stays where you put it.
-        </p>
-      ) : null}
+      {/*
+        Moved here from the budgets table. On the row this was a strip of chips and
+        a "+ category" button, and a bucket with three categories wrapped one line of
+        a grid into five — the table is for comparing figures, and which categories a
+        bucket claims is not comparable at a glance.
+      */}
+      <BucketCategories
+        name={budget.name}
+        kind={budget.budgetKind}
+        categories={budget.categories}
+        budgeted={Number(budget.monthlyLimit)}
+        availableCategories={availableCategories}
+        claimedBy={claimedBy}
+      />
 
       <BucketTransactions
         transactions={transactions}

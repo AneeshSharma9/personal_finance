@@ -323,14 +323,32 @@ A row stores two deliberately separate things:
   Empty means display-only. Migration `0014` backfilled it from the old single
   value, so no bucket lost the category it was already measuring against.
 
-Categories can be added and removed **after** the bucket exists: each one is a chip
-under the bucket's name with a `×` on it, and **+ category** opens a picker of the
-ones still free. This used to be impossible — `RowEditor` could edit nothing but the
-budgeted figure — so the natural want of "Weekend starts as dining, then a month
-shows it should also match entertainment" had no route, and the only way to get it
-was to delete the bucket and rebuild it, losing the figure and the manual
-assignments already pointing at it. The picker stays open after a pick, because a
-bucket usually wants two or three.
+### Where a bucket's categories are edited
+
+On the bucket's **own page**, in a **Match transactions by category** disclosure —
+not on its row in the budgets table.
+
+On the row it was a strip of removable chips plus a "+ category" button and an inline
+picker. A row is a grid cell, so the chips wrapped, the button wrapped, and a bucket
+with three categories turned one line of a financial table into five. The budgets
+page is for comparing figures at a glance, and "which categories does this claim" is
+not comparable at a glance — it is per-bucket detail, one click away.
+
+The trade is real: from the table you can no longer tell an auto-matched bucket from
+a display-only one. That is the right trade for a page whose job is scanning numbers.
+
+The disclosure also says the thing that is easy to get wrong — a transaction already
+filed keeps its bucket even if the category that put it there is later removed, since
+rules only decide future transactions and anything still unassigned.
+
+Saving goes through the same `PUT /api/budgets` the table uses, which upserts on
+(user, kind, name). That is why the component is passed the bucket's `budgeted`
+figure: the endpoint writes the whole row, and sending it back unchanged is what
+stops an edit to one category silently resetting the month's figure.
+
+`claimedBy` is built server-side — category to owning bucket, excluding this one and
+excluding the catch-all — so the client cannot disagree with the editor's own list
+about who owns a category.
 
 An already-claimed category is **greyed out** in the picker rather than hidden,
 with a tooltip naming the bucket that has it. Hiding it meant a category that had
