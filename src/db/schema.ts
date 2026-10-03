@@ -274,15 +274,25 @@ export const budgets = pgTable(
     /** Display label, e.g. "Bills & Utilities". Free-form and user-owned. */
     name: text("name").notNull(),
     /**
-     * Plaid primary category this row's "actual" is measured against, e.g.
-     * "FOOD_AND_DRINK". Null means the row is display-only (a fixed bill like
-     * rent, which has no Plaid category), so its actual stays 0 until a
-     * category is chosen.
+     * Plaid categories this row's "actual" is measured against, e.g.
+     * ["FOOD_AND_DRINK", "GENERAL_MERCHANDISE"]. Empty means the row is
+     * display-only (a fixed bill like rent, which has no Plaid category), so its
+     * actual stays 0 until a category is chosen.
+     *
+     * An array rather than a single value because a real spending bucket is
+     * rarely one category. "Weekend" is DINING_AND_DRINK *and* ENTERTAINMENT;
+     * "Amazon" is GENERAL_MERCHANDISE and ONLINE_SHOPPING. With one slot per
+     * bucket the only options were a vague name or several buckets competing for
+     * the same transactions, and two buckets sharing a category meant only the
+     * first ever matched while the second read $0 forever with no error.
      *
      * Separate from `name` so the user can call a row "Weekend" while still
      * measuring it against DINING_AND_DRINK.
      */
-    category: text("category"),
+    categories: text("categories")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** The "Budgeted" column. */
     monthlyLimit: numeric("monthly_limit", { precision: 14, scale: 2 })
       .notNull()

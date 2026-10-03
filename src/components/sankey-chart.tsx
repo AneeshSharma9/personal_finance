@@ -16,6 +16,7 @@ import {
   type CashFlowGraph,
   type SankeyNodeSpec,
 } from "@/lib/cash-flow";
+import { humanizeCategory } from "@/lib/categories";
 import { formatCurrency } from "@/lib/format";
 import { useMeasuredWidth } from "@/lib/use-measured-width";
 import {
@@ -94,6 +95,15 @@ const TWO_LINE_LABEL_PX = 28;
  */
 const MIN_DRAW_WIDTH = 620;
 
+/**
+ * How far a press may travel before it counts as a drag rather than a click.
+ *
+ * Small enough that a slightly shaky press on a phone still opens a bar, large
+ * enough that a deliberate pan does not. It is also why pointer capture is taken
+ * late rather than on pointerdown - see onPointerDown.
+ */
+const DRAG_SLOP_PX = 5;
+
 export function SankeyChart({
   graph,
   periodLabel,
@@ -104,6 +114,24 @@ export function SankeyChart({
 }) {
   const { ref, width } = useMeasuredWidth(760, 980);
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  /**
+   * The bucket whose categories are shown below the diagram.
+   *
+   * A panel rather than a re-laid-out graph. Splitting one bar into several
+   * inside the Sankey would change every ribbon's width, because the ribbons are
+   * drawn in proportion to the node sizes - so expanding "Everything Else" into
+   * six categories would silently resize Rent, Groceries and everything else.
+   * Answering "what is in this bucket" must not move the other bars.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  /*
+   * A drag that happens to start on a bar ends with a pointerup, and a
+   * pointerup is also a click. Without this, panning the chart by grabbing a bar
+   * would open that bar's breakdown as a side effect.
+   */
+  const draggedRef = useRef(false);
 
   /**
    * The window onto the drawing. Null means "fitted", which is also the state it
@@ -159,6 +187,9 @@ export function SankeyChart({
     lastX: number;
     lastY: number;
     lastSpread: number;
+    /** Where the press started, to tell a drag from a click. */
+    downX?: number;
+    downY?: number;
   } | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -260,6 +291,16 @@ export function SankeyChart({
 
   const activeNode = activeId === null ? null : nodeById.get(activeId) ?? null;
 
+  const toggleExpanded = (id: string) => {
+    const node = nodeById.get(id);
+    // Only buckets with something to split. A synthetic node, or a bucket whose
+    // transactions all carry one category, would open onto a single row.
+    if (!node || !node.breakdown || node.breakdown.length < 2) return;
+    setExpandedId((current) => (current === id ? null : id));
+  };
+
+  const expandedNode = expandedId === null ? null : nodeById.get(expandedId) ?? null;
+
   const isDimmed = (node: SankeyNode<NodeDatum, LinkDatum>): boolean => {
     if (activeNode === null) return false;
     if (node.id === activeNode.id) return false;
@@ -298,6 +339,7 @@ export function SankeyChart({
       ? `${formatCurrency(graph.totals.remaining)} remaining.`
       : `${formatCurrency(Math.abs(graph.totals.remaining))} more spent than earned.`,
     "Up and down arrows read each item, left and right pan, plus and minus zoom, and zero fits the whole diagram.",
+    "Spending bars can be opened with Enter to show the categories inside them.",
   ].join(" ");
 
   /** How far one arrow-key press pans, as a fraction of the window. */
@@ -316,7 +358,19 @@ export function SankeyChart({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-end gap-1 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        {/*
+          Spelled out rather than left to be discovered. The bars look like plain
+          rectangles, so without this nothing suggests they open.
+        */}
+        {graph.nodes.some((node) => (node.breakdown?.length ?? 0) > 1) ? (
+          <span className="text-neutral-500">
+            Click a spending bar to see what is inside it
+          </span>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center justify-end gap-1">
         <Control
           label="Zoom out"
           disabled={!canZoomOut}
@@ -341,6 +395,7 @@ export function SankeyChart({
         >
           Fit
         </Control>
+        </div>
       </div>
 
     <div ref={ref} className="relative w-full">
@@ -361,6 +416,7 @@ export function SankeyChart({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             setActiveId(null);
+            setExpandedId(null);
             return;
           }
 
@@ -385,6 +441,12 @@ export function SankeyChart({
            * bars, so that is the natural direction. Horizontal arrows pan, which
            * keeps the two gestures from fighting over the same keys.
            */
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (activeId !== null) toggleExpanded(activeId);
+            return;
+          }
+
           if (event.key === "ArrowUp" || event.key === "ArrowDown") {
             event.preventDefault();
             const step = event.key === "ArrowDown" ? 1 : -1;
@@ -406,13 +468,31 @@ export function SankeyChart({
         onBlur={() => setActiveId(null)}
         onPointerDown={(event) => {
           if (event.button !== 0 && event.pointerType === "mouse") return;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-          setDragging(true);
+          /*
+           * Capture is taken later, on first movement, and that ordering is the
+           * whole reason clicking a bar works at all.
+           *
+           * While an element holds pointer capture it also receives the
+           * compatibility mouse events - including `click` - no matter what is
+           * underneath. Capturing here meant every click on the diagram was
+           * retargeted to this wrapper, so the bars' own click handlers never ran
+           * and the drill-down silently did nothing.
+           *
+           * So: track the pointer, and only capture once it has actually moved.
+           * A press that turns into a drag still captures (below, past the
+           * threshold) and still pans; a press that turns into nothing never
+           * captures, so the click reaches the bar.
+           */
+          pointers.current.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+          });
           gesture.current = {
             lastX: event.clientX,
             lastY: event.clientY,
             lastSpread: spreadOf(pointers.current),
+            downX: event.clientX,
+            downY: event.clientY,
           };
         }}
         onPointerMove={(event) => {
@@ -430,6 +510,23 @@ export function SankeyChart({
            * between them and panning on the midpoint of it is the whole gesture,
            * and it comes out of the same pointer events as dragging.
            */
+          /*
+           * Past the slop threshold this is a drag, not a press: take capture now
+           * so the gesture survives the pointer leaving the element, and mark it
+           * so the pointerup at the end is not also read as a click.
+           */
+          if (
+            !draggedRef.current &&
+            Math.hypot(
+              event.clientX - (g.downX ?? event.clientX),
+              event.clientY - (g.downY ?? event.clientY),
+            ) > DRAG_SLOP_PX
+          ) {
+            draggedRef.current = true;
+            setDragging(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }
+
           if (held.size >= 2) {
             const points = [...held.values()];
             const spread = spreadOf(held);
@@ -454,14 +551,31 @@ export function SankeyChart({
           g.lastX = event.clientX;
           g.lastY = event.clientY;
           if (dx === 0 && dy === 0) return;
+          draggedRef.current = true;
           setViewState((current) =>
             panView(current ?? fitView(limitRef.current), -dx, -dy, limitRef.current),
           );
         }}
         onPointerUp={(event) => {
+          /*
+           * A press that never became a drag is a click on whatever was under it.
+           * Resolved here rather than with an onClick on the bar, because this
+           * element is the one guaranteed to receive the event - the bar's own
+           * handler only would if nothing had captured the pointer, which is
+           * exactly the condition that used to break it.
+           */
+          if (!draggedRef.current) {
+            const hit = (event.target as Element | null)?.closest?.(
+              "[data-sankey-node]",
+            );
+            const id = hit?.getAttribute("data-sankey-node");
+            if (id) toggleExpanded(id);
+          }
+
           pointers.current.delete(event.pointerId);
           if (pointers.current.size === 0) {
             gesture.current = null;
+            draggedRef.current = false;
             setDragging(false);
           }
         }}
@@ -536,11 +650,41 @@ return (
                 const y1 = node.y1 ?? 0;
                 const right = node.x0 !== undefined && node.x1 !== undefined;
 
+                const canExpand = (spec.breakdown?.length ?? 0) > 1;
+                const isExpanded = expandedId === node.id;
+
                 return (
                   <g
                     key={node.id}
                     onMouseEnter={() => setActiveId(node.id)}
                     onMouseLeave={() => setActiveId(null)}
+                    /*
+                      A <g> has no focus of its own, so keyboard users would
+                      otherwise never reach a bar. role/tabIndex turn it into a
+                      control; arrow keys already move between bars, Enter opens.
+                    */
+                    role={canExpand ? "button" : undefined}
+                    tabIndex={canExpand ? 0 : undefined}
+                    aria-expanded={canExpand ? isExpanded : undefined}
+                    aria-label={
+                      canExpand
+                        ? `${spec.label}, ${formatCurrency(spec.amount)}. Show what is in it.`
+                        : undefined
+                    }
+                    style={{ cursor: canExpand ? "pointer" : undefined }}
+                    /*
+                      The wrapper resolves presses via this attribute rather than
+                      an onClick here, so that a drag that starts on a bar cannot
+                      also open it.
+                    */
+                    data-sankey-node={node.id}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleExpanded(node.id);
+                    }}
+                    onFocus={() => setActiveId(node.id)}
                   >
                     <rect
                       x={node.x0}
@@ -551,6 +695,41 @@ return (
                       fillOpacity={dimmed ? 0.3 : 1}
                       rx={2}
                     />
+                    {/*
+                      A wider invisible target than the bar itself. The bars are
+                      `nodeWidth` across - about 12px - and the ones worth opening
+                      are often the shortest, so the visible rectangle is a poor
+                      thing to require a precise press on.
+                    */}
+                    {canExpand ? (
+                      <rect
+                        data-sankey-hit=""
+                        x={(node.x0 ?? 0) - 8}
+                        y={y0 - 3}
+                        width={(node.x1 ?? 0) - (node.x0 ?? 0) + 16}
+                        height={Math.max(y1 - y0, 1) + 6}
+                        fill="transparent"
+                        pointerEvents="all"
+                      />
+                    ) : null}
+                    {/*
+                      A hairline outline rather than a colour change, so "which bar
+                      am I looking at" survives for anyone who cannot rely on the
+                      fill alone.
+                    */}
+                    {isExpanded ? (
+                      <rect
+                        x={(node.x0 ?? 0) - 2}
+                        y={y0 - 2}
+                        width={(node.x1 ?? 0) - (node.x0 ?? 0) + 4}
+                        height={Math.max(y1 - y0, 1) + 4}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        className="text-neutral-500 dark:text-neutral-300"
+                        rx={3}
+                      />
+                    ) : null}
                     {/*
                       One line of text per bar. A bar tall enough for its own
                       second line gets the amount underneath; a short one gets it
@@ -607,6 +786,62 @@ return (
           }}
         </Sankey>
       </svg>
+
+      {/*
+        The drill-down. A bucket is what you budget in, but a category is what you
+        actually buy, so a single bar cannot tell you whether a bucket needs
+        splitting - only what is inside it can. Clicking the bar answers that
+        without re-drawing the diagram, which matters because the ribbon widths are
+        proportional: reshaping one node would resize every other bar.
+      */}
+      {expandedNode?.breakdown && expandedNode.breakdown.length > 1 ? (
+        <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+              {expandedNode.label}
+            </p>
+            <button
+              type="button"
+              onClick={() => setExpandedId(null)}
+              className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+            >
+              Close
+            </button>
+          </div>
+          <p className="text-xs text-neutral-500">
+            {formatCurrency(expandedNode.amount)} across{" "}
+            {expandedNode.breakdown.length} categories
+            {expandedNode.budgeted
+              ? `, against ${formatCurrency(expandedNode.budgeted)} budgeted`
+              : null}
+          </p>
+
+          <ul className="mt-2 space-y-1">
+            {expandedNode.breakdown.map((row) => {
+              const share =
+                expandedNode.amount > 0 ? row.amount / expandedNode.amount : 0;
+              return (
+                <li key={row.category} className="flex items-center gap-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate text-neutral-700 dark:text-neutral-300">
+                    {humanizeCategory(row.category)}
+                  </span>
+                  <span
+                    aria-hidden
+                    className="h-1.5 shrink-0 rounded-full bg-indigo-400 dark:bg-indigo-500"
+                    style={{ width: `${Math.max(share * 88, 1)}px` }}
+                  />
+                  <span className="w-10 shrink-0 text-right tabular-nums text-neutral-500">
+                    {Math.round(share * 100)}%
+                  </span>
+                  <span className="w-20 shrink-0 text-right tabular-nums text-neutral-900 dark:text-neutral-100">
+                    {formatCurrency(row.amount)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
 
       {activeNode === null ? null : (
         <TooltipWithBounds

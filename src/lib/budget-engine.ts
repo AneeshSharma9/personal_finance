@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
 import { categoryCandidates, isCatchAll, isEarningCategory } from "@/lib/categories";
@@ -48,6 +48,63 @@ export type RuleSet = {
    */
   loanRules: { loanId: number; matchType: string; value: string }[];
 };
+
+/**
+ * Turn budget rows into implicit category rules.
+ *
+ * Pure, and extracted from loadRuleSet so it can be tested without a database -
+ * this is the part that decides which transactions a bucket claims, and it is
+ * where a bucket stops being one category and becomes several.
+ *
+ * One entry per (bucket, category) pair, not per bucket. "Weekend" holding
+ * [DINING_AND_DRINK, ENTERTAINMENT] has to match both, and they are independent:
+ * matching dining must not stop it matching entertainment.
+ */
+export function bucketCategoryRules(
+  budgets: {
+    id: number;
+    name: string;
+    budgetKind: "basic" | "category" | "earning";
+    categories: string[];
+  }[],
+): {
+  bucketCategories: { budgetId: number; value: string; name: string }[];
+  catchAllBudgetId: number | null;
+} {
+  const spending = budgets.filter((budget) => budget.budgetKind !== "earning");
+
+  /*
+   * Categories are honoured on any spending bucket, including one whose name
+   * looks like the remainder bucket. The name is a heuristic; an explicit category
+   * is a decision, and the two are orthogonal - so "Everything Else" plus
+   * [ENTERTAINMENT] claims entertainment and is simply no longer the catch-all.
+   *
+   * Ignoring the category because of the name was strictly worse: such a bucket
+   * produced no rule AND no catch-all, so it matched nothing at all and displayed
+   * a plausible-looking $0 actual with nothing to explain it.
+   */
+  const bucketCategories = spending
+    .filter((budget) => budget.categories.length > 0)
+    .flatMap((budget) =>
+      budget.categories.map((value) => ({
+        budgetId: budget.id,
+        value: value.toUpperCase(),
+        name: budget.name,
+      })),
+    );
+
+  /*
+   * The catch-all means "spending nothing else claimed", so it is identified by
+   * having no categories at all. Giving it one would make it compete with a real
+   * bucket and take that bucket's transactions, which is the opposite of what a
+   * remainder bucket is for.
+   */
+  const catchAll = spending.find(
+    (budget) => budget.categories.length === 0 && isCatchAll(budget.name),
+  );
+
+  return { bucketCategories, catchAllBudgetId: catchAll?.id ?? null };
+}
 
 export async function loadRuleSet(userId: string): Promise<RuleSet> {
   const [rules, budgets] = await Promise.all([
@@ -107,32 +164,14 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
       value: rule.matchValue.toUpperCase(),
     }));
 
-  const bucketCategories = budgets
-    .filter(
-      (budget) =>
-        budget.budgetKind !== "earning" &&
-        budget.category &&
-        !isCatchAll(budget.name),
-    )
-    .map((budget) => ({
-      budgetId: budget.id,
-      value: budget.category!.toUpperCase(),
-      name: budget.name,
-    }));
-
-  const catchAll = budgets.find(
-    (budget) =>
-      budget.budgetKind !== "earning" &&
-      !budget.category &&
-      isCatchAll(budget.name),
-  );
+  const { bucketCategories, catchAllBudgetId } = bucketCategoryRules(budgets);
 
   return {
     amountRules,
     merchantRules,
     categoryRules,
     bucketCategories,
-    catchAllBudgetId: catchAll?.id ?? null,
+    catchAllBudgetId,
     earningBudgetIds: budgets
       .filter((budget) => budget.budgetKind === "earning")
       .map((budget) => budget.id),
@@ -341,18 +380,7 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
     },
   });
 
-  /*
-   * Account type per accountId, loaded in its own query because the schema
-   * declares no Drizzle relations for the relational `with` join.
-   */
-  const accountTypes = new Map<string, string>(
-    (
-      await db.query.accounts.findMany({
-        where: inArray(tables.accounts.id, accountIds),
-        columns: { id: true, type: true },
-      })
-    ).map((account) => [String(account.id), account.type]),
-  );
+  const accountTypes = await accountTypeMap(accountIds);
 
   if (pending.length === 0) {
     return { scanned: 0, assigned: 0, byBucket: {} };
@@ -479,16 +507,132 @@ export async function getActualsByBucket(
   return actuals;
 }
 
+/**
+ * The one definition of "spending that still needs a bucket".
+ *
+ * Three separate places used to answer this question and each filtered
+ * differently, so the numbers could not all be right:
+ *
+ *   - getUnassignedTransactions filtered `amount > 0` but NOT `excluded`, so it
+ *     listed rows the engine had deliberately ignored.
+ *   - applyBudgetRules filtered `excluded = false`, so "Assign unassigned"
+ *     structurally could not touch anything that page displayed.
+ *   - countUnassigned filtered neither, so the badge counted rows neither of the
+ *     other two could see.
+ *
+ * The visible symptom was thirteen DISCOVER card payments sitting in the queue
+ * with an Assign control that did nothing: they are `excluded = true` (correct -
+ * paying a card is not spending), so the engine skipped them, and pressing assign
+ * appeared broken because no amount of pressing could have worked.
+ *
+ * `excluded = false` is the important clause and it is not cosmetic. Excluded
+ * means the user has already answered "this is not spending" by ignoring it, so
+ * re-surfacing it as an open question contradicts a decision they made.
+ *
+ * Interchangeable with the raw-SQL callers: `and(...)` returns a SQL fragment, so
+ * `sql`where ${unassignedSpend(ids)}`` embeds the same predicates.
+ */
+export function unassignedSpend(accountIds: number[]) {
+  return and(
+    inArray(tables.transactions.accountId, accountIds),
+    isNull(tables.transactions.budgetId),
+    eq(tables.transactions.pending, false),
+    /*
+     * Not a display filter. An ignored row is neither income nor spending, so
+     * including it here would put it back in the queue with no way to clear it
+     * from the queue itself.
+     */
+    eq(tables.transactions.excluded, false),
+    // numeric column, so the bound is a string; Postgres casts for the compare.
+    gt(tables.transactions.amount, "0"),
+  );
+}
+
+/**
+ * Account type per accountId.
+ *
+ * Its own query because the schema declares no Drizzle relations for the
+ * relational `with` join.
+ */
+async function accountTypeMap(accountIds: number[]): Promise<Map<string, string>> {
+  if (accountIds.length === 0) return new Map();
+  return new Map(
+    (
+      await db.query.accounts.findMany({
+        where: inArray(tables.accounts.id, accountIds),
+        columns: { id: true, type: true },
+      })
+    ).map((account) => [String(account.id), account.type]),
+  );
+}
+
+/**
+ * Where each transaction WOULD go, without writing anything.
+ *
+ * The unassigned queue used to make the user guess: the only way to find out where
+ * a transaction belonged was to assign it and see. That is a bad way to learn
+ * whether your rules are right, because a wrong guess becomes a manual assignment
+ * - which applyBudgetRules will then never revisit, since it only ever touches
+ * rows with no bucket. One misfiled row and the engine stops being the answer.
+ *
+ * So this runs the exact same pure matcher the engine runs, over rows that are
+ * still unassigned, and reports what it would decide. Same `resolveBucket`, same
+ * RuleSet, same precedence - so the preview cannot disagree with what a later
+ * "Assign unassigned" would do. It only ever reads.
+ *
+ * A missing entry means resolveBucket returned null: nothing would claim this
+ * row, which is worth showing as "no match" rather than hiding.
+ */
+export async function suggestBucketAssignments(
+  userId: string,
+  rows: {
+    id: number;
+    merchantName: string | null;
+    name: string | null;
+    categoryOverride: string | null;
+    plaidCategoryPrimary: string | null;
+    plaidCategoryDetailed: string | null;
+    amount: number;
+    accountId: number;
+  }[],
+): Promise<Map<number, number>> {
+  const suggestions = new Map<number, number>();
+  if (rows.length === 0) return suggestions;
+
+  const [rules, accountIds] = await Promise.all([
+    loadRuleSet(userId),
+    userAccountIds(userId),
+  ]);
+  const accountTypes = await accountTypeMap(accountIds);
+
+  for (const row of rows) {
+    const budgetId = resolveBucket(
+      {
+        merchantName: row.merchantName,
+        name: row.name,
+        categoryOverride: row.categoryOverride,
+        plaidCategoryPrimary: row.plaidCategoryPrimary,
+        plaidCategoryDetailed: row.plaidCategoryDetailed,
+        amount: row.amount,
+        accountType: accountTypes.get(String(row.accountId)) ?? "other",
+      },
+      rules,
+    );
+    if (budgetId !== null) suggestions.set(row.id, budgetId);
+  }
+
+  return suggestions;
+}
+
 /** Count of transactions still waiting for a bucket, for the UI. */
 export async function countUnassigned(userId: string): Promise<number> {
   const accountIds = await userAccountIds(userId);
   if (accountIds.length === 0) return 0;
 
+  // Same predicate as the queue page, so the badge cannot outnumber the list.
   const [row] = await db.execute<{ n: number }>(sql`
     select count(*)::int as n from transactions
-    where account_id in ${accountIds}
-      and budget_id is null
-      and pending = false
+    where ${unassignedSpend(accountIds)}
   `);
   return row?.n ?? 0;
 }

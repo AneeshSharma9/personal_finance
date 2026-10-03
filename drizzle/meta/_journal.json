@@ -99,6 +99,13 @@
       "when": 1790971902514,
       "tag": "0013_spicy_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790971962514,
+      "tag": "0014_budget_bucket_categories",
+      "breakpoints": true
     }
   ]
 }

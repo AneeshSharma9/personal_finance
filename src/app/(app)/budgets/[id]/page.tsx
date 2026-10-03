@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
+import { humanizeCategory } from "@/lib/categories";
 import { formatCurrency, monthRange } from "@/lib/format";
 import {
   getBudgetForUser,
@@ -109,9 +110,13 @@ export default async function BucketPage({
       */}
       <MonthNav year={year} month={month} bucketId={budget.id} />
 
-      {budget.category ? (
+      {budget.categories.length > 0 ? (
         <p className="text-xs text-neutral-500">
-          New transactions matching this bucket&apos;s category are routed here
+          New transactions matching{" "}
+          {budget.categories.length === 1
+            ? "this bucket's category"
+            : "any of this bucket's categories"}{" "}
+          ({budget.categories.map(humanizeCategory).join(", ")}) are routed here
           automatically. Anything you move below stays where you put it.
         </p>
       ) : null}

@@ -1,11 +1,15 @@
 import "server-only";
 
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
 import { isCatchAll } from "@/lib/categories";
-import { getActualsByBucket } from "@/lib/budget-engine";
+import {
+  getActualsByBucket,
+  suggestBucketAssignments,
+  unassignedSpend,
+} from "@/lib/budget-engine";
 import {
   WORKSHEET_NUMBER_FIELDS,
   type WorksheetInput,
@@ -333,13 +337,15 @@ export async function getBudgetsWithActuals(
       id: budget.id,
       kind: budget.budgetKind,
       name: budget.name,
-      category: budget.category,
+      categories: budget.categories,
       budgeted,
       actual,
       remaining: budgeted - actual,
       percentUsed: budgeted > 0 ? (actual / budgeted) * 100 : null,
       isCatchAll:
-        budget.budgetKind !== "earning" && !budget.category && isCatchAll(budget.name),
+        budget.budgetKind !== "earning" &&
+        budget.categories.length === 0 &&
+        isCatchAll(budget.name),
     });
   }
 
@@ -350,7 +356,8 @@ export type BudgetRowResult = {
   id: number;
   kind: tables.BudgetKind;
   name: string;
-  category: string | null;
+  /** Plaid categories this bucket claims. Empty means display-only. */
+  categories: string[];
   budgeted: number;
   actual: number;
   remaining: number;
@@ -388,12 +395,9 @@ export async function getSpendSummary(
     select count(*)::int as n,
            coalesce(sum(amount), 0)::text as total
     from transactions
-    where account_id in ${accountIds}
+    where ${unassignedSpend(accountIds)}
       and date >= ${from}
       and date <= ${to}
-      and pending = false
-      and budget_id is null
-      and amount > 0
   `);
 
   return {
@@ -415,6 +419,12 @@ export type UnassignedTransaction = {
    */
   displayCategory: string;
   notes: string | null;
+  /**
+   * The bucket the engine would file this in, or null when nothing would claim
+   * it. Purely a preview - computed with the same matcher applyBudgetRules uses,
+   * and never written.
+   */
+  suggestedBudgetId: number | null;
 };
 
 /**
@@ -424,10 +434,11 @@ export type UnassignedTransaction = {
  * count on the budgets page links here and the two must not disagree: a link
  * that says "14 unassigned" and lists 40 is worse than no link.
  *
- * `amount > 0` is the same filter, and it is doing real work rather than being a
- * display choice. Money in is routed to an earnings bucket automatically, and
- * money moving a credit or loan balance is excluded as neither income nor
- * spending - both are `amount < 0`, so neither can end up in this queue.
+ * `amount > 0` and `excluded = false` are not display choices. Money in is routed
+ * to an earnings bucket automatically, and a user who has ignored a row has
+ * already decided it is not spending. Both are expressed once, in
+ * `unassignedSpend`, and shared with the engine and the badge so this list, the
+ * "Assign unassigned" button and the count cannot disagree about what is left.
  */
 export async function getUnassignedTransactions(
   userId: string,
@@ -439,13 +450,9 @@ export async function getUnassignedTransactions(
 
   const rows = await db.query.transactions.findMany({
     where: and(
-      inArray(tables.transactions.accountId, accountIds),
-      isNull(tables.transactions.budgetId),
+      unassignedSpend(accountIds),
       gte(tables.transactions.date, from),
       lte(tables.transactions.date, to),
-      eq(tables.transactions.pending, false),
-      // numeric, so the bound is a string. Postgres casts it for the comparison.
-      gt(tables.transactions.amount, "0"),
     ),
     orderBy: (t, { desc }) => [desc(t.date), desc(t.id)],
     limit: 500,
@@ -455,11 +462,29 @@ export async function getUnassignedTransactions(
       amount: true,
       merchantName: true,
       name: true,
+      accountId: true,
       categoryOverride: true,
       plaidCategoryPrimary: true,
+      // resolveBucket matches on the detailed category too, so the preview has to
+      // carry it or it would suggest a different bucket than the engine picks.
+      plaidCategoryDetailed: true,
       notes: true,
     },
   });
+
+  const suggestions = await suggestBucketAssignments(
+    userId,
+    rows.map((row) => ({
+      id: row.id,
+      merchantName: row.merchantName,
+      name: row.name,
+      categoryOverride: row.categoryOverride,
+      plaidCategoryPrimary: row.plaidCategoryPrimary,
+      plaidCategoryDetailed: row.plaidCategoryDetailed,
+      amount: toNumber(row.amount),
+      accountId: row.accountId,
+    })),
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -472,6 +497,7 @@ export async function getUnassignedTransactions(
       row.plaidCategoryPrimary ??
       "Uncategorized",
     notes: row.notes,
+    suggestedBudgetId: suggestions.get(row.id) ?? null,
   }));
 }
 
@@ -804,6 +830,18 @@ export type CashFlowBucket = {
   amount: number;
   /** Budgeted for the same window. Context for the tooltip, never a flow. */
   budgeted: number;
+  /**
+   * What is inside this bucket, by category, largest first.
+   *
+   * A bucket is the unit you budget in but a category is what you actually buy,
+   * so a single fat node tells you nothing about whether it needs splitting. The
+   * user had one bucket, "Everything Else", absorbing every uncategorised thing
+   * they bought - and no way to see what was in it, so they were budgeting it by
+   * guesswork. This is the same money, cut the other way.
+   *
+   * Sums to `amount`; absent for a bucket with no transactions behind it.
+   */
+  breakdown: { category: string; amount: number }[];
 };
 
 export type CashFlowData = {
@@ -829,6 +867,63 @@ export type CashFlowData = {
  * The buckets also decide the shape of the diagram, so the diagram and the rule
  * that fills the buckets have to agree.
  */
+/**
+ * Every transaction in a bucket, grouped by the category it carries.
+ *
+ * Uses the user's override when they have set one, falling back to Plaid's
+ * primary category and finally the detailed one - the same precedence
+ * categoryCandidates applies, so the drill-down splits money the same way the
+ * rest of the app classifies it.
+ *
+ * Rows are summed per (bucket, category) in SQL rather than pulled back and
+ * folded here: a YTD window is tens of thousands of rows and this runs on every
+ * cash-flow page load.
+ */
+async function getCategoryBreakdownByBucket(
+  userId: string,
+  accountIds: number[],
+  from: string,
+  to: string,
+): Promise<Map<number, { category: string; amount: number }[]>> {
+  const byBucket = new Map<number, { category: string; amount: number }[]>();
+  if (accountIds.length === 0) return byBucket;
+
+  const rows = await db.execute<{
+    budget_id: number;
+    category: string;
+    total: string;
+  }>(sql`
+    select budget_id,
+           coalesce(
+             ${tables.transactions.categoryOverride},
+             ${tables.transactions.plaidCategoryPrimary},
+             ${tables.transactions.plaidCategoryDetailed}
+           ) as category,
+           coalesce(sum(${tables.transactions.amount}), 0)::text as total
+    from ${tables.transactions}
+    where ${inArray(tables.transactions.accountId, accountIds)}
+      and ${tables.transactions.budgetId} is not null
+      and ${tables.transactions.date} >= ${from}
+      and ${tables.transactions.date} <= ${to}
+      and ${tables.transactions.pending} = false
+      and ${tables.transactions.excluded} = false
+      and ${tables.transactions.amount} > 0
+    group by budget_id, category
+    order by sum(${tables.transactions.amount}) desc
+  `);
+
+  for (const row of rows) {
+    const list = byBucket.get(row.budget_id) ?? [];
+    list.push({
+      category: row.category ?? "Uncategorized",
+      amount: toNumber(row.total),
+    });
+    byBucket.set(row.budget_id, list);
+  }
+
+  return byBucket;
+}
+
 export async function getCashFlow(
   userId: string,
   from: string,
@@ -853,6 +948,12 @@ export async function getCashFlow(
 
   const actuals = await getActualsByBucket(userId, from, to);
   const accountIds = await getAccountIds(userId);
+  const breakdownByBucket = await getCategoryBreakdownByBucket(
+    userId,
+    accountIds,
+    from,
+    to,
+  );
 
   const income: CashFlowBucket[] = [];
   const spending: CashFlowBucket[] = [];
@@ -872,6 +973,7 @@ export async function getCashFlow(
       budgeted: isEarning
         ? 0
         : toNumber(bucket.monthlyLimit) * Math.max(months, 1),
+      breakdown: breakdownByBucket.get(bucket.id) ?? [],
     };
 
     (isEarning ? income : spending).push(row);
@@ -882,20 +984,18 @@ export async function getCashFlow(
    * let the diagram report a healthy Remaining while real money went somewhere
    * unlabelled, which is the one thing a cash flow view must not do.
    *
-   * Same filters as getSpendSummary, so the two figures agree.
+   * The same shared predicate the queue and the badge use, so this figure, the
+   * "N unassigned" link and the list behind it can never disagree - they were four
+   * hand-written filters that had already drifted once.
    */
   let unassigned = 0;
   if (accountIds.length > 0) {
     const [row] = await db.execute<{ total: string }>(sql`
       select coalesce(sum(amount), 0)::text as total
       from transactions
-      where account_id in ${accountIds}
+      where ${unassignedSpend(accountIds)}
         and date >= ${from}
         and date <= ${to}
-        and pending = false
-        and excluded = false
-        and budget_id is null
-        and amount > 0
     `);
     unassigned = toNumber(row?.total ?? 0);
   }
@@ -1072,7 +1172,10 @@ export async function getSpendableCategories(
 export async function getBudgets(userId: string): Promise<tables.Budget[]> {
   return db.query.budgets.findMany({
     where: eq(tables.budgets.userId, userId),
-    orderBy: (b, { asc }) => [asc(b.category)],
+    // was `asc(b.category)`, which sorted display-only buckets (null) together
+    // ahead of the ones that actually measure something. Sort order is the
+    // user's own arrangement, so use it.
+    orderBy: (b, { asc }) => [asc(b.sortOrder), asc(b.id)],
   });
 }
 

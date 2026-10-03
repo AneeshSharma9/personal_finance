@@ -38,7 +38,7 @@ export async function GET() {
       id: row.id,
       kind: row.budgetKind,
       name: row.name,
-      category: row.category,
+      categories: row.categories,
       budgeted: toNumber(row.monthlyLimit),
       sortOrder: row.sortOrder,
     });
@@ -86,7 +86,7 @@ export async function PUT(request: Request) {
       userId: auth.userId,
       budgetKind: input.kind,
       name: input.name,
-      category: input.category,
+      categories: input.categories,
       monthlyLimit: input.budgeted.toFixed(2),
       sortOrder,
     })
@@ -97,7 +97,7 @@ export async function PUT(request: Request) {
         tables.budgets.name,
       ],
       set: {
-        category: input.category,
+        categories: input.categories,
         monthlyLimit: input.budgeted.toFixed(2),
         ...(input.sortOrder === undefined ? { sortOrder } : {}),
         updatedAt: new Date(),
@@ -107,7 +107,7 @@ export async function PUT(request: Request) {
       id: tables.budgets.id,
       kind: tables.budgets.budgetKind,
       name: tables.budgets.name,
-      category: tables.budgets.category,
+      categories: tables.budgets.categories,
       budgeted: tables.budgets.monthlyLimit,
       sortOrder: tables.budgets.sortOrder,
     });
@@ -156,7 +156,7 @@ export type BudgetRow = {
   id: number;
   kind: tables.BudgetKind;
   name: string;
-  category: string | null;
+  categories: string[];
   budgeted: number;
   sortOrder: number;
 };
@@ -188,7 +188,8 @@ export function computeTotals(
 type BudgetInput = {
   kind: tables.BudgetKind;
   name: string;
-  category: string | null;
+  /** Plaid categories this bucket claims. Empty means display-only. */
+  categories: string[];
   budgeted: number;
   sortOrder?: number;
 };
@@ -222,24 +223,39 @@ function parseBudgetInput(body: unknown): BudgetInput {
     throw new Error("budgeted must be under 1,000,000.");
   }
 
-  let category: string | null = null;
-  if (
-    raw.category !== undefined &&
-    raw.category !== null &&
-    raw.category !== ""
-  ) {
-    if (typeof raw.category !== "string") {
-      throw new Error("category must be a string.");
+  /*
+   * A list, because a bucket is rarely one category - "Weekend" is dining *and*
+   * entertainment, "Amazon" is general merchandise *and* online shopping. With one
+   * slot per bucket the only options were a vague name or several buckets
+   * competing for the same transactions, and two buckets sharing a category meant
+   * only the first ever matched while the second read $0 forever, silently.
+   *
+   * Each value is uppercased and de-duplicated. Not validated against a fixed
+   * list on purpose: Plaid's PFC taxonomy moved to v2 for Items created after
+   * 2025-12-03, so a frozen enum would reject perfectly valid categories.
+   * Matching is case-insensitive against the user's real data at read time.
+   */
+  let categories: string[] = [];
+  if (raw.categories !== undefined && raw.categories !== null) {
+    if (!Array.isArray(raw.categories)) {
+      throw new Error("categories must be an array of strings.");
     }
-    const trimmed = raw.category.trim();
-    if (trimmed.length > 100) {
-      throw new Error("category must be 100 characters or fewer.");
+    if (raw.categories.length > 50) {
+      throw new Error("A bucket cannot match more than 50 categories.");
     }
-    // Not validated against a fixed list on purpose: Plaid's PFC taxonomy moved
-    // to v2 for Items created after 2025-12-03, so a frozen enum would reject
-    // perfectly valid categories. Matching is done case-insensitively against the
-    // user's real data at read time.
-    category = trimmed.toUpperCase();
+    const seen = new Set<string>();
+    for (const value of raw.categories) {
+      if (typeof value !== "string") {
+        throw new Error("categories must be an array of strings.");
+      }
+      const trimmed = value.trim();
+      if (trimmed.length === 0) continue;
+      if (trimmed.length > 100) {
+        throw new Error("categories must be 100 characters or fewer.");
+      }
+      seen.add(trimmed.toUpperCase());
+    }
+    categories = [...seen];
   }
 
   let sortOrder: number | undefined;
@@ -251,7 +267,7 @@ function parseBudgetInput(body: unknown): BudgetInput {
     sortOrder = Math.trunc(parsed);
   }
 
-  return { kind, name, category, budgeted, sortOrder };
+  return { kind, name, categories, budgeted, sortOrder };
 }
 
 async function nextSortOrder(

@@ -19,6 +19,11 @@ export type FlowBucket = {
   amount: number;
   /** Budgeted for the same window, for context only - never a flow. */
   budgeted?: number;
+  /**
+   * What the bucket contains, by category, largest first. Sums to `amount`.
+   * Drives the click-to-expand drill-down; absent means there is nothing to show.
+   */
+  breakdown?: { category: string; amount: number }[];
 };
 
 export type SankeyNodeSpec = {
@@ -30,6 +35,8 @@ export type SankeyNodeSpec = {
   budgeted?: number;
   /** True when the node is "everything else" rather than a real bucket. */
   synthetic?: boolean;
+  /** Per-category split, carried through untouched for the drill-down. */
+  breakdown?: { category: string; amount: number }[];
 };
 
 export type SankeyLinkSpec = {
@@ -134,6 +141,7 @@ export function buildCashFlowGraph({
       kind: "spending",
       amount: row.amount,
       budgeted: row.budgeted,
+      breakdown: row.breakdown,
     });
   }
 

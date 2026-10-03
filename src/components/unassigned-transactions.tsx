@@ -40,6 +40,8 @@ export function UnassignedTransactions({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+
+  const bucketName = new Map(buckets.map((bucket) => [bucket.id, bucket.name]));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
 
@@ -143,6 +145,26 @@ export function UnassignedTransactions({
                   {formatDate(transaction.date)} &middot;{" "}
                   {humanizeCategory(transaction.displayCategory)}
                 </p>
+                {/*
+                  What the engine would do, computed with the same matcher it
+                  uses. Shown before the assign control rather than after it,
+                  because the first thing you want to know about a queue of
+                  transactions is whether your rules already know the answer -
+                  not whether you can guess it faster than the app can.
+                */}
+                <p className="mt-0.5 text-xs text-neutral-400">
+                  {transaction.suggestedBudgetId === null ? (
+                    <>No rule matches this yet</>
+                  ) : (
+                    <>
+                      Auto:{" "}
+                      <span className="text-neutral-600 dark:text-neutral-300">
+                        {bucketName.get(transaction.suggestedBudgetId) ??
+                          "a bucket that no longer exists"}
+                      </span>
+                    </>
+                  )}
+                </p>
               </div>
 
               <p className="shrink-0 text-sm tabular-nums">
@@ -150,6 +172,20 @@ export function UnassignedTransactions({
               </p>
 
               <span className="flex shrink-0 items-center gap-2">
+                {transaction.suggestedBudgetId !== null ? (
+                  <button
+                    type="button"
+                    disabled={pending || saving !== null}
+                    onClick={() =>
+                      void assign(transaction.id, transaction.suggestedBudgetId!)
+                    }
+                    title={`File this in ${bucketName.get(transaction.suggestedBudgetId) ?? "the matching bucket"}`}
+                    className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  >
+                    Use this
+                  </button>
+                ) : null}
+
                 <button
                   type="button"
                   disabled={pending || saving !== null}

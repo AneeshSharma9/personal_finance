@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 process.loadEnvFile(".env.local");
 
-const { isBalanceMovement, resolveBucket } = await import("@/lib/budget-engine");
+const { bucketCategoryRules, isBalanceMovement, resolveBucket } = await import(
+  "@/lib/budget-engine",
+);
 type RuleSet = import("@/lib/budget-engine").RuleSet;
 
 /** Bucket ids used across these tests. */
@@ -345,4 +347,106 @@ test("a merchant rule still outranks a category override", () => {
     ),
     B.dining,
   );
+});
+
+/*
+ * A bucket holding several categories.
+ *
+ * The user could only ever pick one Plaid category per bucket, so a real spending
+ * group had to be called something vague ("Fun") or split into several buckets
+ * that then competed for the same transactions. These cover the array form.
+ */
+const budget = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  name: "Bucket",
+  budgetKind: "category" as const,
+  categories: [] as string[],
+  ...over,
+});
+
+test("a bucket emits one rule per category it holds", () => {
+  const { bucketCategories } = bucketCategoryRules([
+    budget({ id: 7, name: "Weekend", categories: ["DINING_AND_DRINK", "ENTERTAINMENT"] }),
+  ]);
+
+  assert.deepEqual(bucketCategories, [
+    { budgetId: 7, value: "DINING_AND_DRINK", name: "Weekend" },
+    { budgetId: 7, value: "ENTERTAINMENT", name: "Weekend" },
+  ]);
+});
+
+test("a bucket matches every category it holds, not just the first", () => {
+  const { bucketCategories } = bucketCategoryRules([
+    budget({ id: 7, name: "Weekend", categories: ["DINING_AND_DRINK", "ENTERTAINMENT"] }),
+  ]);
+
+  for (const category of ["DINING_AND_DRINK", "ENTERTAINMENT"]) {
+    assert.equal(
+      resolveBucket(txn({ plaidCategoryPrimary: category }), rules({ bucketCategories })),
+      7,
+      `${category} should reach Weekend`,
+    );
+  }
+  // and it still does not claim anything else
+  assert.equal(
+    resolveBucket(txn({ plaidCategoryPrimary: "RENT_AND_UTILITIES_RENT" }), rules({ bucketCategories })),
+    B.catchAll,
+  );
+});
+
+test("category values are uppercased on the way in", () => {
+  const { bucketCategories } = bucketCategoryRules([
+    budget({ id: 7, name: "Weekend", categories: ["dining_and_drink"] }),
+  ]);
+  assert.equal(bucketCategories[0]?.value, "DINING_AND_DRINK");
+});
+
+test("the catch-all is the bucket with no categories", () => {
+  const { catchAllBudgetId } = bucketCategoryRules([
+    budget({ id: 7, name: "Weekend", categories: ["ENTERTAINMENT"] }),
+    budget({ id: 9, name: "Everything Else", categories: [] }),
+  ]);
+  assert.equal(catchAllBudgetId, 9);
+});
+
+test("a catch-all given a category stops being the catch-all", () => {
+  /*
+   * Otherwise it would compete with a real bucket and take its transactions -
+   * the opposite of what a remainder bucket is for. Losing the remainder is the
+   * correct outcome, and the editor greys the option out so it is hard to do by
+   * accident.
+   */
+  const { catchAllBudgetId, bucketCategories } = bucketCategoryRules([
+    budget({ id: 9, name: "Everything Else", categories: ["ENTERTAINMENT"] }),
+  ]);
+  assert.equal(catchAllBudgetId, null);
+  assert.equal(bucketCategories.length, 1);
+});
+
+test("two buckets claiming one category: the first wins and the second gets nothing", () => {
+  /*
+   * Not rejected anywhere - the editor greys the option out, but a direct PUT
+   * still allows it. Documented here because the failure is silent and total: the
+   * second bucket reads $0 forever with no error, which is what made two buckets
+   * created from the same template look like a broken import.
+   */
+  const { bucketCategories } = bucketCategoryRules([
+    budget({ id: 7, name: "First", categories: ["ENTERTAINMENT"] }),
+    budget({ id: 8, name: "Second", categories: ["ENTERTAINMENT"] }),
+  ]);
+
+  assert.equal(bucketCategories.length, 2, "both rules are built");
+  assert.equal(
+    resolveBucket(txn({ plaidCategoryPrimary: "ENTERTAINMENT" }), rules({ bucketCategories })),
+    7,
+    "only the first ever matches",
+  );
+});
+
+test("earnings buckets never claim spending categories", () => {
+  const { bucketCategories, catchAllBudgetId } = bucketCategoryRules([
+    budget({ id: 7, name: "Paycheck", budgetKind: "earning", categories: ["INCOME"] }),
+  ]);
+  assert.deepEqual(bucketCategories, []);
+  assert.equal(catchAllBudgetId, null);
 });

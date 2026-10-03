@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         columns: {
           id: true,
           name: true,
-          category: true,
+          categories: true,
           budgetKind: true,
           monthlyLimit: true,
           sortOrder: true,
@@ -150,10 +150,10 @@ export async function POST(request: Request) {
             userId: auth.userId,
             budgetKind: targetKind,
             name: targetName!,
-            // Deliberately null. A merged bucket spans several categories, so a
-            // single implicit category would under-claim; explicit rules below
-            // cover each source category instead.
-            category: null,
+            // Deliberately empty. A merged bucket spans several categories, and
+            // the explicit rules below cover each source one instead - leaving an
+            // implicit list here would double-claim them.
+            categories: [],
             monthlyLimit: (monthlyLimit ?? 0).toFixed(2),
             // Sit where the first source sat rather than jumping to the end.
             sortOrder: Math.min(...sources.map((b) => b.sortOrder)),
@@ -198,11 +198,7 @@ export async function POST(request: Request) {
        * cannot stack duplicates on the (userId, matchType, matchValue) index.
        */
       const categories = [
-        ...new Set(
-          sources
-            .map((b) => b.category)
-            .filter((c): c is string => Boolean(c)),
-        ),
+        ...new Set(sources.flatMap((b) => b.categories)),
       ];
       let rulesCreated = 0;
       for (const category of categories) {

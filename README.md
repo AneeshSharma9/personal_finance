@@ -314,7 +314,31 @@ transaction's own Plaid category is the honest unit of a bucket.
 A row stores two deliberately separate things:
 
 - `name` — the display label, free-form and yours ("Bills & Utilities").
-- `category` — the Plaid category its Actual is measured against.
+- `categories` — the Plaid categories its Actual is measured against. A **list**,
+  because a real spending bucket is rarely one category: "Weekend" is dining *and*
+  entertainment, "Amazon" is general merchandise *and* online shopping. It was a
+  single `text` column, which forced a choice between a vague name and several
+  buckets fighting over the same transactions.
+
+  Empty means display-only. Migration `0014` backfilled it from the old single
+  value, so no bucket lost the category it was already measuring against.
+
+Categories can be added and removed **after** the bucket exists: each one is a chip
+under the bucket's name with a `×` on it, and **+ category** opens a picker of the
+ones still free. This used to be impossible — `RowEditor` could edit nothing but the
+budgeted figure — so the natural want of "Weekend starts as dining, then a month
+shows it should also match entertainment" had no route, and the only way to get it
+was to delete the bucket and rebuild it, losing the figure and the manual
+assignments already pointing at it. The picker stays open after a pick, because a
+bucket usually wants two or three.
+
+An already-claimed category is **greyed out** in the picker rather than hidden,
+with a tooltip naming the bucket that has it. Hiding it meant a category that had
+gone somewhere else simply stopped being offerable, and the only symptom was that
+the bucket could never match anything again with nothing to say why. Sharing is
+still permitted — the editor greys the option, but a direct `PUT` allows it — and
+when it happens only the first bucket in display order ever matches while the
+second reads $0 forever, silently.
 
 ### Naming a bucket yourself
 
@@ -393,7 +417,8 @@ same muted grey at 40% and at 140%.
    transaction first (buckets are evaluated in display order). If no bucket
    matches the override it falls to Everything Else rather than being misfiled.
 3. **Explicit category rules** — stored in `budget_rules`.
-4. **The bucket's own `category`** — an implicit category rule.
+4. **The bucket's own `categories`** — one implicit category rule per value, so
+   a multi-category bucket matches all of them rather than only the first.
 5. **Everything Else** — the remainder.
 6. **An earnings bucket** — for money in, never for spending.
 
@@ -449,12 +474,76 @@ Both write `budgetId` / `excluded` through `PATCH /api/transactions/[id]`, the
 same route the bucket detail page uses. Since the engine only fills nulls, a
 choice made here is durable and a later sync will not undo it.
 
-The queue's filter is deliberately identical to the count's
-(`getUnassignedTransactions` vs `getSpendSummary`): month-scoped, `pending =
-false`, `budget_id is null`, `amount > 0`. A link that says "14 unassigned" and
-lists 40 would be worse than no link. `amount > 0` is doing real work — money in
-is routed to an earnings bucket automatically, and money moving a credit or loan
-balance is excluded as neither, and both are negative.
+Every row shows **what the engine would do with it** before you touch anything,
+computed by `suggestBucketAssignments` — the same `resolveBucket` and the same
+`RuleSet` that **Assign unassigned** uses, run over rows that are still null and
+never written. **Use this** files it in one click. A transaction with no match says
+so rather than showing nothing.
+
+The preview matters because of how the engine treats its own output: it only ever
+fills nulls, so a guess you make here becomes a manual assignment and is never
+revisited. Finding out where a transaction belongs *after* assigning it teaches you
+nothing about whether your rules are right.
+
+### One definition of "unassigned"
+
+"What still needs a bucket" is defined **once**, in `unassignedSpend()`, and used
+by all four places that answer it: the queue, the count on the budgets page, the
+number reported after **Assign unassigned**, and the cash-flow diagram's unassigned
+figure.
+
+This was not the case. Three places each spelled out their own filters and had
+already drifted: the queue filtered `amount > 0` but not `excluded`, the engine
+filtered `excluded = false`, and the count filtered neither. Thirteen Discover card
+payments were `excluded = true` — correct, since paying a card is not spending — so
+the queue **listed** them while **Assign unassigned** was structurally incapable of
+touching them. From the user's side: rows that could not be assigned no matter how
+many times the button was pressed, and a count that moved by a different number
+than the list.
+
+`excluded = false` is the clause that matters and it is not cosmetic. Ignored means
+the user has already answered "this is not spending", so re-surfacing it as an open
+question contradicts a decision they made.
+
+`applyBudgetRules` deliberately does **not** use the shared predicate: it scans a
+superset, including money coming in and negative amounts on card accounts, because
+routing income and marking a card payment excluded are both its job. The invariant
+is one-directional — everything the queue shows must be reachable by the engine —
+and `tests/unassigned-filter.test.mts` asserts it, because no arithmetic test can
+see a disagreement between three functions.
+
+`amount > 0` is still doing real work in that predicate: money in is routed to an
+earnings bucket automatically, and money moving a credit or loan balance is
+excluded as neither.
+
+### Seeing inside a bucket on the cash flow diagram
+
+Clicking a spending bar opens a breakdown of that bucket by category: amount, share
+of the bucket, and a proportional bar. A bucket is the unit you budget in, but a
+category is what you actually buy, so one fat bar cannot tell you whether a bucket
+needs splitting — only its contents can.
+
+Bars are resolved on the chart's `pointerup`, not on the bars' own `onClick`. The
+pan gesture used to call `setPointerCapture` on `pointerdown`, and an element
+holding pointer capture also receives the *compatibility mouse events* — `click`
+included — whatever is underneath the pointer. Every click on the diagram was
+therefore retargeted to the wrapper and the drill-down silently did nothing, while
+keyboard activation kept working and made it look like a rendering fault. Capture
+is now taken on first movement past a 5px slop threshold, so a press that turns
+into a drag still pans and a press that turns into nothing reaches the bar.
+`tests/sankey-interaction.test.mts` pins that ordering, since the natural
+"tidy-up the drag handler" refactor would restore the bug with nothing failing.
+
+Each expandable bar also gets a transparent hit target wider than its ~12px visible
+width, because the bars worth opening are often the shortest.
+
+It is a panel rather than a re-laid-out diagram on purpose. The ribbons are drawn in
+proportion to node size, so splitting one bar into several *inside* the Sankey would
+resize Rent, Groceries and every other bar. Answering "what is in this bucket" must
+not move the other bars.
+
+The breakdown comes from `getCategoryBreakdownByBucket`, summed per (bucket,
+category) in SQL, and every row sums exactly to its bucket's total.
 
 ### Changing a transaction's category
 

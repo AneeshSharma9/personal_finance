@@ -16,7 +16,7 @@ export type BudgetRow = {
   id: number;
   kind: "basic" | "category" | "earning";
   name: string;
-  category: string | null;
+  categories: string[];
   budgeted: number;
   actual: number;
   remaining: number;
@@ -91,7 +91,7 @@ export function BudgetEditor({
   const saveBudget = (payload: {
     kind: BudgetRow["kind"];
     name: string;
-    category: string | null;
+    categories: string[];
     budgeted: number;
   }) =>
     call("/api/budgets", {
@@ -127,17 +127,29 @@ export function BudgetEditor({
   };
 
   /**
-   * Categories already used as a bucket, so they don't appear as options twice.
+   * Which bucket already claims each category, so the picker can show the options
+   * that are still free and mark the ones that are taken.
+   *
+   * A map rather than a set, because the editor no longer hides a claimed
+   * category - it greys it out and says who has it. Hiding it meant a category
+   * that had gone somewhere else simply stopped being offerable, so the only
+   * visible symptom was that "Groceries" could never match anything again and
+   * nothing said why.
+   *
+   * The catch-all is not listed: it is the bucket for spending nothing else
+   * claimed, so it must not itself claim a category or it would compete with a
+   * real bucket and take its transactions.
    */
-  const usedCategories = new Set(
-    [...basics, ...categories, ...earnings]
-      .map((row) => row.category)
-      .filter((value): value is string => Boolean(value)),
-  );
+  const claimedBy = new Map<string, string>();
+  for (const row of [...basics, ...categories, ...earnings]) {
+    if (row.isCatchAll) continue;
+    for (const value of row.categories) {
+      // First bucket wins, matching resolveBucket's first-match-wins order.
+      if (!claimedBy.has(value)) claimedBy.set(value, row.name);
+    }
+  }
 
-  const options = availableCategories.filter(
-    (category) => !usedCategories.has(category),
-  );
+  const options = availableCategories;
 
   const spendingOptions = options.filter(
     (category) => !isIncomeCategory(category),
@@ -178,6 +190,7 @@ export function BudgetEditor({
       <EarningsTable
         rows={earnings}
         options={earningOptions}
+        claimedBy={claimedBy}
         pending={pending}
         year={year}
         month={month}
@@ -191,6 +204,7 @@ export function BudgetEditor({
         rows={basics}
         kind="basic"
         options={spendingOptions}
+        claimedBy={claimedBy}
         pending={pending}
         year={year}
         month={month}
@@ -204,6 +218,7 @@ export function BudgetEditor({
         rows={categories}
         kind="category"
         options={spendingOptions}
+        claimedBy={claimedBy}
         pending={pending}
         year={year}
         month={month}
@@ -307,6 +322,7 @@ function BudgetTable({
   rows,
   kind,
   options,
+  claimedBy,
   pending,
   year,
   month,
@@ -318,13 +334,14 @@ function BudgetTable({
   rows: BudgetRow[];
   kind: "basic" | "category";
   options: string[];
+  claimedBy: Map<string, string>;
   pending: boolean;
   year: number;
   month: number;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
-    category: string | null;
+    categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
@@ -372,6 +389,8 @@ function BudgetTable({
             year={year}
             month={month}
             disabled={pending}
+            availableCategories={options}
+            claimedBy={claimedBy}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -385,6 +404,7 @@ function BudgetTable({
           <NewBucketForm
             kind={kind}
             options={options}
+            claimedBy={claimedBy}
             disabled={pending}
             emptyLabel={rows.length === 0 ? "Pick a category" : "Filter categories"}
             onCreate={(payload) => {
@@ -401,6 +421,7 @@ function BudgetTable({
 function EarningsTable({
   rows,
   options,
+  claimedBy,
   pending,
   year,
   month,
@@ -409,13 +430,14 @@ function EarningsTable({
 }: {
   rows: BudgetRow[];
   options: string[];
+  claimedBy: Map<string, string>;
   pending: boolean;
   year: number;
   month: number;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
-    category: string | null;
+    categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
@@ -463,6 +485,8 @@ function EarningsTable({
             year={year}
             month={month}
             disabled={pending}
+            availableCategories={options}
+            claimedBy={claimedBy}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -472,6 +496,7 @@ function EarningsTable({
           <NewBucketForm
             kind="earning"
             options={options}
+            claimedBy={claimedBy}
             disabled={pending}
             emptyLabel="Pick an income category"
             onCreate={(payload) => {
@@ -500,30 +525,59 @@ function EarningsTable({
 function NewBucketForm({
   kind,
   options,
+  claimedBy,
   disabled,
   emptyLabel,
   onCreate,
 }: {
   kind: BudgetRow["kind"];
   options: string[];
+  /**
+   * Which bucket already claims each category, so a taken option can be greyed
+   * out and attributed rather than silently hidden. Hiding it looked like the
+   * category had stopped existing.
+   */
+  claimedBy: Map<string, string>;
   disabled: boolean;
   emptyLabel: string;
   onCreate: (payload: {
     kind: BudgetRow["kind"];
     name: string;
-    category: string | null;
+    categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
 }) {
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
+  /*
+   * A set, because a bucket is rarely one category: "Weekend" is dining AND
+   * entertainment, "Amazon" is general merchandise AND online shopping. One slot
+   * per bucket forced a choice between a vague name and several buckets fighting
+   * over the same transactions.
+   */
+  const [categories, setCategories] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+
+  const toggle = (value: string) =>
+    setCategories((current) =>
+      current.includes(value)
+        ? current.filter((entry) => entry !== value)
+        : [...current, value],
+    );
 
   const visible = query.trim()
     ? options.filter((value) =>
         value.toLowerCase().includes(query.trim().toLowerCase()),
       )
     : options;
+
+  /*
+   * Offered for this form but already spoken for. Still rendered, still
+   * searchable - just not selectable - because "why can't I pick Groceries?" is a
+   * worse experience than "Groceries is already matched by Groceries".
+   */
+  const takenElsewhere = (value: string) => claimedBy.get(value) !== undefined;
+
+  const selectable = visible.filter((value) => !takenElsewhere(value));
 
   const trimmed = name.trim();
   const canCreate = trimmed.length > 0;
@@ -533,9 +587,9 @@ function NewBucketForm({
     // Cleared before the await so a slow save cannot be double-submitted, and
     // so the form is ready for the next bucket either way.
     setName("");
-    setCategory("");
+    setCategories([]);
     setQuery("");
-    return onCreate({ kind, name: trimmed, category: category || null, budgeted: 0 });
+    return onCreate({ kind, name: trimmed, categories, budgeted: 0 });
   }
 
   return (
@@ -559,24 +613,52 @@ function NewBucketForm({
           />
         </label>
 
-        <label className="block min-w-48 flex-1">
+        {/*
+          A summary rather than a control. The chips below are the real picker -
+          a <select multiple> needs ctrl-click, scrolls to one item at a time, and
+          cannot say why an option is unavailable. This just reports the current
+          state of the choice and offers the one action that changes it.
+        */}
+        <div className="min-w-48 flex-1">
           <span className="mb-1 block text-xs text-neutral-500">
             Match transactions by (optional)
           </span>
-          <select
-            value={category}
-            disabled={disabled}
-            onChange={(event) => setCategory(event.target.value)}
-            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-          >
-            <option value="">Nothing - display only</option>
-            {options.map((value) => (
-              <option key={value} value={value}>
-                {humanizeCategory(value)}
-              </option>
-            ))}
-          </select>
-        </label>
+          <div className="flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700">
+            {categories.length === 0 ? (
+              <span className="text-neutral-500">
+                Nothing - display only
+              </span>
+            ) : (
+              <>
+                {categories.map((value) => (
+                  <span
+                    key={value}
+                    className="flex items-center gap-1 rounded-full bg-neutral-900 px-2 py-0.5 text-xs text-white dark:bg-white dark:text-neutral-900"
+                  >
+                    {humanizeCategory(value)}
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => toggle(value)}
+                      aria-label={`Stop matching ${humanizeCategory(value)}`}
+                      className="opacity-70 hover:opacity-100"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setCategories([])}
+                  className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
         <button
           type="button"
@@ -607,27 +689,55 @@ function NewBucketForm({
             className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
           />
           <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-            {visible.map((value) => (
-              <button
-                key={value}
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  setCategory(value);
-                  // Only fill a name the user has not written themselves.
-                  if (!name.trim()) setName(humanizeCategory(value));
-                }}
-                className={`rounded-full border px-2.5 py-1 text-xs disabled:opacity-50 ${
-                  category === value
-                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                    : "border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-                }`}
-              >
-                {humanizeCategory(value)}
-              </button>
-            ))}
+            {visible.map((value) => {
+              const owner = claimedBy.get(value);
+              const selected = categories.includes(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={disabled || owner !== undefined}
+                  aria-pressed={selected}
+                  /*
+                    The tooltip is the whole point of greying rather than hiding:
+                    it names the bucket that already has this category. Two buckets
+                    claiming one category is not rejected - the first silently wins
+                    and the second reads $0 forever - so this is the only place the
+                    user is told.
+                  */
+                  title={
+                    owner !== undefined
+                      ? `Already matched by "${owner}"`
+                      : selected
+                        ? `Stop matching ${humanizeCategory(value)}`
+                        : `Also match ${humanizeCategory(value)}`
+                  }
+                  onClick={() => {
+                    toggle(value);
+                    // Only fill a name the user has not written themselves, and
+                    // only from the first pick - "Weekend" beats "Dining And Drink".
+                    if (!name.trim() && categories.length === 0) {
+                      setName(humanizeCategory(value));
+                    }
+                  }}
+                  className={`rounded-full border px-2.5 py-1 text-xs disabled:cursor-not-allowed ${
+                    selected
+                      ? "border-neutral-900 bg-neutral-900 text-white disabled:opacity-100 dark:border-white dark:bg-white dark:text-neutral-900"
+                      : owner !== undefined
+                        ? "border-neutral-200 text-neutral-400 line-through dark:border-neutral-800 dark:text-neutral-600"
+                        : "border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  }`}
+                >
+                  {humanizeCategory(value)}
+                </button>
+              );
+            })}
             {visible.length === 0 ? (
               <span className="text-xs text-neutral-500">No matches.</span>
+            ) : selectable.length === 0 && visible.length > 0 ? (
+              <span className="text-xs text-neutral-500">
+                Everything here is already matched by another bucket.
+              </span>
             ) : null}
           </div>
         </>
@@ -641,6 +751,8 @@ function RowEditor({
   year,
   month,
   disabled,
+  availableCategories,
+  claimedBy,
   onSave,
   onDelete,
 }: {
@@ -648,14 +760,52 @@ function RowEditor({
   year: number;
   month: number;
   disabled: boolean;
+  /** Every category present in the user's transactions, for the add picker. */
+  availableCategories: string[];
+  claimedBy: Map<string, string>;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
-    category: string | null;
+    categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
   onDelete: (id: number) => Promise<Response | null>;
 }) {
+  /*
+   * Adding or removing a category is a normal edit, not a new-bucket form.
+   *
+   * It used to be impossible: a bucket's category could only be set at creation,
+   * and RowEditor could edit nothing but the figure. So the natural thing to want
+   * - "Weekend" starts as dining, then a month reveals it should also match
+   * entertainment - had no route at all, and the only way to get it was to delete
+   * the bucket and rebuild it, losing the budgeted amount and the manual
+   * assignments already pointing at it.
+   */
+  const [pickingCategory, setPickingCategory] = useState(false);
+
+  /**
+   * Categories this row could still take.
+   *
+   * A category already on *this* bucket is not offered, and neither is one another
+   * bucket has claimed. Sharing is not rejected - the first bucket in display order
+   * simply wins forever and the other reads $0 - so this is the only place that
+   * fact is visible.
+   */
+  const addableCategories = availableCategories.filter(
+    (value) =>
+      !row.categories.includes(value) && claimedBy.get(value) !== row.name,
+  );
+
+  function saveCategories(next: string[]) {
+    if (next.length === row.categories.length) return;
+    return onSave({
+      kind: row.kind,
+      name: row.name,
+      categories: next,
+      budgeted: row.budgeted,
+    });
+  }
+
   const [text, setText] = useState(() =>
     formatCurrencyInput(String(row.budgeted)),
   );
@@ -700,11 +850,67 @@ function RowEditor({
         >
           {row.name}
         </Link>
-        {row.category ? (
-          <span className="block truncate text-xs text-neutral-500">
-            {humanizeCategory(row.category)}
-          </span>
-        ) : null}
+        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+          {row.categories.map((value) => (
+            <span
+              key={value}
+              className="flex max-w-40 items-center gap-1 rounded-full bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+            >
+              <span className="truncate">{humanizeCategory(value)}</span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  void saveCategories(
+                    row.categories.filter((entry) => entry !== value),
+                  )
+                }
+                aria-label={`Stop matching ${humanizeCategory(value)} on ${row.name}`}
+                title={`Stop matching ${humanizeCategory(value)}`}
+                className="shrink-0 text-neutral-400 hover:text-neutral-800 disabled:opacity-50 dark:hover:text-neutral-100"
+              >
+                &times;
+              </button>
+            </span>
+          ))}
+
+          <button
+            type="button"
+            disabled={disabled || addableCategories.length === 0}
+            onClick={() => setPickingCategory((open) => !open)}
+            aria-expanded={pickingCategory}
+            title={
+              addableCategories.length === 0
+                ? "Every category is either already on this bucket or claimed by another"
+                : "Add a category this bucket matches"
+            }
+            className="rounded-full border border-dashed border-neutral-300 px-1.5 py-0.5 text-xs text-neutral-500 hover:border-neutral-400 hover:text-neutral-800 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            {pickingCategory ? "Cancel" : "+ category"}
+          </button>
+
+          {pickingCategory ? (
+            <div className="flex max-h-28 w-full flex-wrap gap-1 overflow-y-auto rounded border border-neutral-200 p-1 dark:border-neutral-800">
+              {addableCategories.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    // Left open on purpose: a bucket usually wants two or three
+                    // categories, and reopening between each one would make the
+                    // second one a separate errand.
+                    void saveCategories([...row.categories, value]);
+                  }}
+                  title={`Also match ${humanizeCategory(value)}`}
+                  className="rounded-full border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                >
+                  {humanizeCategory(value)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <input
@@ -727,7 +933,7 @@ function RowEditor({
           void onSave({
             kind: row.kind,
             name: row.name,
-            category: row.category,
+            categories: row.categories,
             budgeted: parsed,
           });
         }}
