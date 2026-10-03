@@ -4,6 +4,9 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
 import { Toast } from "@/components/toast";
+import { summariseMatches } from "@/lib/rule-match-summary";
+import type { RuleMatches } from "@/lib/rule-match-types";
+import { formatCurrency } from "@/lib/format";
 import { selectAllProps } from "@/lib/select-all";
 
 /**
@@ -66,16 +69,28 @@ export function RulesEditor({
   buckets,
   loans,
   categories,
+  matchesByRule,
 }: {
   initialRules: Rule[];
   buckets: { id: number; name: string; kind: string }[];
   loans: { id: number; name: string }[];
   categories: string[];
+  /**
+   * Matched transactions per rule id, worked out on the server.
+   *
+   * The matching itself has to happen there: it lives beside the routing engine in
+   * a server-only module, and a second implementation on this side is how the count
+   * here starts disagreeing with what saving a rule actually did. Only the capped
+   * preview is sent, so this stays small however many transactions a rule matches.
+   */
+  matchesByRule: Record<string, RuleMatches>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  /** Rules whose transaction list is open, so a rule can be checked without saving. */
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   /** Bumped per notice so the Toast remounts and replays its animation. */
   const noticeSeq = useRef(0);
 
@@ -560,6 +575,16 @@ export function RulesEditor({
                     </li>
                   ))}
                 </ol>
+                <RuleMatchesList
+                  matches={matchesByRule[String(rule.id)]}
+                  open={expanded[rule.id] ?? false}
+                  onToggle={() =>
+                    setExpanded((current) => ({
+                      ...current,
+                      [rule.id]: !current[rule.id],
+                    }))
+                  }
+                />
               </div>
               <span className="flex shrink-0 items-center gap-3">
                 {/*
@@ -656,4 +681,123 @@ function where(target: string): string {
 
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+/**
+ * The transactions a rule is affecting, collapsed behind a count.
+ *
+ * Collapsed by default because a dozen rules each listing twenty rows would bury
+ * the rules themselves, and because "no matching transactions" is the single most
+ * useful thing to notice about a rule that is not working - so the count is always
+ * visible even when the list is not.
+ */
+function RuleMatchesList({
+  matches,
+  open,
+  onToggle,
+}: {
+  matches: RuleMatches | undefined;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!matches) return null;
+  const summary = summariseMatches(matches);
+  const none = matches.total === 0;
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={none}
+        aria-expanded={open}
+        className={`flex items-center gap-1 text-xs transition disabled:cursor-default ${
+          none
+            ? "text-amber-700 dark:text-amber-400"
+            : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+        }`}
+      >
+        {/*
+          A chevron rather than a bullet, and only while the list is open: the
+          affordance has to say there is something to expand.
+        */}
+        {none ? null : (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+            className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`}
+          >
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+        )}
+        {summary}
+      </button>
+
+      {open && !none ? (
+        <div className="mt-1.5 overflow-hidden rounded border border-neutral-200 dark:border-neutral-800">
+          <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+            {matches.matches.map((match) => (
+              <li
+                key={match.id}
+                className="flex items-center justify-between gap-2 px-2 py-1 text-xs"
+              >
+                <span className="min-w-0 truncate text-neutral-700 dark:text-neutral-200">
+                  {formatShortDate(match.date)}{" "}
+                  <span className="text-neutral-500">{match.label}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {match.excluded ? (
+                    <span
+                      title="Excluded from budgeting, so this rule would not change it"
+                      className="text-neutral-400"
+                    >
+                      ignored
+                    </span>
+                  ) : match.inTarget === true ? (
+                    <span
+                      title="Already routed here by this rule"
+                      className="text-green-700 dark:text-green-400"
+                    >
+                      applied
+                    </span>
+                  ) : match.inTarget === false ? (
+                    <span
+                      title="Not in this rule's bucket, so applying it would move this"
+                      className="text-neutral-400"
+                    >
+                      would move
+                    </span>
+                  ) : null}
+                  <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
+                    {formatCurrency(Math.abs(match.amount))}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {matches.total > matches.shown ? (
+            <p className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-500 dark:border-neutral-800">
+              Showing the {matches.shown} most recent of {matches.total}. Narrow
+              the rule to see the rest.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** `2026-03-01` as `1 Mar`, which fits beside a merchant name on a phone. */
+function formatShortDate(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) return date;
+  const name = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ][month - 1];
+  return name ? `${day} ${name}` : date;
 }

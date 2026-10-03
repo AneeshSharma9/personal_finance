@@ -199,6 +199,35 @@ async function loadCandidates(userId: string): Promise<CandidateRow[]> {
   return rows.map((row) => ({ ...row, amount: toNumber(row.amount) }));
 }
 
+/**
+ * The transactions a rule could touch, for the rules page to show.
+ *
+ * Exported rather than reimplemented because the rules page has to agree with the
+ * engine exactly. If it queried its own rows with its own filter and reported a
+ * different count, the page would be worse than useless - it would be confidently
+ * wrong about what a rule does.
+ *
+ * Exported as a type too: `ClientRuleCandidate` is what reaches the client, and it
+ * is this exact shape, so the page cannot drift from the source.
+ */
+export type ClientRuleCandidate = Omit<CandidateRow, "accountId">;
+
+export async function getRuleCandidates(
+  userId: string,
+): Promise<ClientRuleCandidate[]> {
+  const rows = await loadCandidates(userId);
+  return rows.map((row) => {
+    /*
+     * accountId is dropped on purpose: the rules page has no use for it, and
+     * sending it would put every transaction's account in the page payload for
+     * nothing.
+     */
+    const copy = { ...row };
+    delete (copy as Partial<CandidateRow>).accountId;
+    return copy;
+  });
+}
+
 /** Account type per accountId, needed to tell a card payment from real spending. */
 async function loadAccountTypes(
   userId: string,
@@ -234,7 +263,12 @@ export function matchesStoredRule(
     plaidCategoryPrimary?: string | null;
     plaidCategoryDetailed?: string | null;
   },
-  rule: StoredRule,
+  /*
+   * Narrower than StoredRule on purpose: matching reads two fields, and the rules
+   * page needs to ask the question without holding a stored row. Demanding the full
+   * type here would mean every caller had to fabricate ids and targets.
+   */
+  rule: Pick<StoredRule, "matchType" | "matchValue">,
 ): boolean {
   switch (rule.matchType) {
     case "merchant": {

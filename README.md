@@ -910,6 +910,43 @@ used to default to `'manual'`, which meant every row written before it existed w
 labelled as a hand-tag and no undo ever removed any of them. See
 `drizzle/0010_silent_veda.sql`, which relabels those rows and drops the default.
 
+### Seeing what a rule is affecting
+
+Each rule on `/rules` carries a count of the transactions it matches, and a
+collapsed list behind it: date, description, amount, and whether the rule has
+already routed it.
+
+**The count comes from the engine's own matcher.** `transactionsForRule` calls the
+same `matchesStoredRule` that `applyRulesToHistory` does, so the number here and
+what saving a rule actually does cannot disagree — which is the only property worth
+having. A rule list that filtered in SQL would be faster and might well answer a
+slightly different question, and a confidently wrong count is worse than none.
+
+Because that matcher lives beside the routing engine in a `server-only` module, the
+matching runs on the server and only the capped preview crosses to the client.
+Nothing is recomputed in the browser, which is also why there is no second
+implementation to drift.
+
+Three details that are load-bearing rather than decorative:
+
+- **Excluded rows are listed, and labelled "ignored".** They are excluded from
+  budgeting but still *match*, and a rule whose every match is ignored is exactly
+  the case this view exists to explain. All three of the ignore rules in the seed
+  data are in that position.
+- **"Applied" versus "would move"** is what makes a long list worth reading. Without
+  it you cannot tell a working rule from one that has not been re-run.
+- **The list is capped at 20, the count is not.** A merchant rule from three years
+  ago matches hundreds of rows; the question being asked is usually "is this rule
+  doing what I think", which the most recent twenty answer.
+
+A rule with no bucket step (a loan step, or an ignore) has no bucket to be "applied"
+to, so that column is dropped rather than guessed at.
+
+The trade-off is O(rules × transactions) in memory per page load: candidates are read
+once and filtered per rule in JS rather than per rule in SQL. For a personal
+finance app with thousands of transactions that is the right way round — the page is
+responsive and, more importantly, it cannot disagree with the engine.
+
 ## Manual loans
 
 Debt Plaid cannot see, like a car loan from a credit union. `loans` holds the

@@ -5,7 +5,9 @@ import { RulesEditor, type Rule } from "@/components/rules-editor";
 import { requireUser } from "@/lib/auth";
 import { getBudgets, getCategories, getLoans } from "@/lib/queries";
 import { db, tables } from "@/db";
-import { groupRuleRows } from "@/lib/rules";
+import { groupRuleRows, getRuleCandidates } from "@/lib/rules";
+import { transactionsForRule } from "@/lib/rule-matches";
+import type { RuleMatches } from "@/lib/rule-match-types";
 
 export const metadata: Metadata = { title: "Rules · Finance" };
 
@@ -18,7 +20,7 @@ export const metadata: Metadata = { title: "Rules · Finance" };
 export default async function RulesPage() {
   const user = await requireUser();
 
-  const [rows, buckets, loans, categories] = await Promise.all([
+  const [rows, buckets, loans, categories, candidates] = await Promise.all([
     db.query.budgetRules.findMany({
       where: eq(tables.budgetRules.userId, user.id),
       orderBy: [
@@ -30,6 +32,12 @@ export default async function RulesPage() {
     getBudgets(user.id),
     getLoans(user.id),
     getCategories(user.id),
+    /*
+     * One read of the transactions any rule could touch, filtered in JS by the
+     * engine's own matcher. Filtering in SQL would be faster and would risk
+     * answering a slightly different question than the router does.
+     */
+    getRuleCandidates(user.id),
   ]);
 
   const bucketNameById = new Map(buckets.map((b) => [b.id, b.name]));
@@ -60,6 +68,31 @@ export default async function RulesPage() {
     })),
   }));
 
+  /*
+   * Computed here rather than in the editor: `matchesStoredRule` lives beside the
+   * engine in a server-only module, and reimplementing it client-side is how the
+   * count on this page starts disagreeing with what saving a rule actually does.
+   *
+   * Only the capped preview crosses to the client, so the payload is bounded by
+   * MATCH_PREVIEW_LIMIT per rule however many transactions each one matches.
+   */
+  const matchesByRule: Record<string, RuleMatches> = {};
+  for (const rule of rules) {
+    /*
+     * "Already applied" is a question about a bucket, so a rule with no bucket step
+     * - a loan step, or an ignore - has nothing to compare against and the column
+     * is dropped rather than guessed at. The first bucket step wins, since a rule
+     * normally has one.
+     */
+    const targetBudgetId =
+      rule.steps.find((step) => step.target === "bucket")?.budgetId ?? null;
+    matchesByRule[String(rule.id)] = transactionsForRule(
+      candidates,
+      rule,
+      targetBudgetId,
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
@@ -80,6 +113,7 @@ export default async function RulesPage() {
         }))}
         loans={loans.map((loan) => ({ id: loan.id, name: loan.name }))}
         categories={categories}
+        matchesByRule={matchesByRule}
       />
 
       <section className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-400">
