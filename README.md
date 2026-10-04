@@ -614,6 +614,123 @@ budget by the months the range touches: the same bucket would have shown "ten mo
 budgeted" on one page and "twelve" on the other. `to` now ends at the last day of
 the elapsed month, so the two agree by construction. A finished year is unchanged.
 
+### The month strip
+
+The budgets page picks its month from a strip of the selected year's twelve months,
+horizontally scrolling, with the year dropdown above it on the right.
+
+It replaced a rolling six-month window flanked by arrows, which had three problems
+worth recording. Paging moved the window *and* the selection together, so the
+figures below always jumped — there was no way to scroll the strip just to look
+around. Six of twelve months were unreachable without paging, on a page whose
+subject is a month. And the window kept its own `wYear`/`wMonth` URL parameters: a
+second piece of state that could disagree with the month actually on screen. Those
+parameters are deleted, not ignored; the strip is a pure function of the year.
+
+The scrollbar is hidden (`.scrollbar-hidden`) and the fades (`.fade-edge-*`) are
+the replacement affordance. The fade on each side appears **only** when there is
+more of the year past it, measured on scroll, resize and content change — so at
+either end of the year exactly one shows, and a strip wide enough to hold all
+twelve shows neither. Measured rather than assumed because twelve tiles are close
+enough to a wide desktop's width that there would otherwise be two permanent
+smudges at the ends of a static row.
+
+Three details that are easy to lose:
+
+- **`scrollIntoView` uses `inline: "nearest"`.** A link to March must not open with
+  March off-screen, but a phone shows only about three tiles, and `"start"` would
+  hide everything before the selection.
+- **`overscroll-x-contain`** stops a flick at the end of the year scrolling the page
+  behind the strip, which is most of what makes a horizontal scroller feel broken
+  on a phone.
+- **The fades are `pointer-events: none`**, so a decorative gradient can never be
+  the reason a tile cannot be clicked.
+
+Future months are drawn but not linked: they cannot have transactions, so a link
+would promise an empty page.
+
+#### Why the strip snaps in JavaScript
+
+Selecting a month scrolls it fully into view, flush against whichever edge it is
+nearer. That took **three** attempts, all of which failed in the same way, and the
+reason is worth keeping:
+
+A tile can only snap flush to its **start** edge, so the last tiles' snap positions
+fall beyond `maxScroll` and are simply unreachable. Twelve 72px tiles with an 8px gap
+is 952px of content, and at every container width narrow enough to scroll at all,
+December's snap point is past the end.
+
+1. `scroll-snap-type: x mandatory` + `snap-align: start`. Mandatory snapping had no
+   valid target for the last tiles and left them wherever the scroll landed — half
+   cut off.
+2. `scrollIntoView({ inline: "nearest" })`. Scrolls the minimum distance to make the
+   tile visible, which lands a few pixels off a boundary; the browser then
+   reconciled that with the snap rule and pulled the tile back.
+3. Rounding the required scroll to the nearest boundary. Rounds *away* from the
+   scroll a tile needs: at 700px, September needs 20px, which rounds to 0, which
+   cuts its last 12px off again.
+
+The working version is in `src/lib/month-strip.ts`, pure and React-free, because it
+has to be testable — a `"use client"` module cannot be imported by the test runner,
+which resolves React through the `react-server` condition and gets a build with no
+`createContext`.
+
+The fix is **bands, not points**. `visible` is every position that shows the tile
+whole; `roomy` is the subset that also leaves a gap at the edge it stops against.
+Prefer `roomy`, fall back to `visible`, and never round out of `visible` — showing
+the tile matters more than landing on a tidy boundary. Two details that follow from
+it: an already-visible tile is left alone (otherwise the band search answers "80"
+when the answer is "stay put", because zero is excluded for want of a gap), and an
+off-boundary position is legitimate when no boundary fits the band.
+
+Settling after a free drag is debounced at 140ms — long enough to outlast iOS
+momentum scrolling, which keeps firing `scroll` after the finger lifts.
+
+#### The reveal and the settle must not fight
+
+Both move the strip by assigning `scrollLeft`, which fires a scroll event, which is
+what schedules the settle. That coupling took three attempts to get right:
+
+1. Selecting **December** revealed it flush right at `maxScroll`; the settle fired off
+   that scroll event 140ms later, rounded the position back to a boundary, and cut
+   December off again — by up to 32px. December is the only tile that can need the
+   strip at `maxScroll`, and `maxScroll` is never a multiple of the stride, so it was
+   the only tile that revealed off-boundary and the only one visibly wrong. Every
+   other month revealed onto a boundary already, so the settle agreed with it. That
+   asymmetry is why it presented as "something is off on December" rather than "the
+   settling is broken".
+2. The fix was to make the settle refuse any boundary that clipped the **selected**
+   month. December was fixed and dragging broke: the selected month is usually
+   off-screen while you browse, so the strip sprang back to it on every release and
+   felt like it was fighting you. Free scrolling has to stay free.
+3. The actual fix: **a scroll the component caused does not schedule a settle.**
+
+So the division of labour is: the reveal owns "is the selected month visible", and
+the settle owns only "is the strip on a tile boundary". Neither consults the other.
+
+The end of the strip is also a resting place, not just a limit. `maxScroll` is rarely
+a whole number of strides from zero — 352px at a 600px container — so rounding always
+stopped short of it and the last tile could never sit flush right at rest. Whichever
+of {nearest boundary, `maxScroll`} is nearer to where the drag ended wins, so the end
+is reachable without making the whole strip magnetic towards it.
+
+`tests/month-strip-interaction.test.mts` pins the event ordering (there is no DOM
+harness here, and this is about ordering rather than arithmetic); the arithmetic is in
+`month-strip-scroll.test.mts`. The source-level assertion that matters most is that
+`settleStrip` never reaches for `selectedRef` again — that is the exact shape of the
+regression, and nothing else would fail if it came back. Revealing on
+selection is instant rather than animated, because it runs straight after a
+navigation where Next restores scroll on its own schedule.
+
+`tests/month-strip-scroll.test.mts` pins all twelve months as fully visible across
+seven container widths, because this only ever misbehaved for the last few tiles at
+particular widths — the range nobody checks by hand.
+
+Both utilities are plain CSS in `globals.css` rather than Tailwind gradient
+utilities, because that utility was `bg-gradient-to-r` in v3 and `bg-linear-to-r`
+in v4 — and a build will not tell you a class name it does not recognise, it
+silently emits nothing. Explicit CSS cannot be silently wrong.
+
 ### Changing a transaction's category
 
 Click a category on the transactions page to change it. That writes

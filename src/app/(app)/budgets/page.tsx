@@ -57,30 +57,15 @@ export default async function BudgetsPage({
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
 
-  /**
-   * Strip window anchor: six months ending at TODAY by default.
+  /*
+   * The strip shows the whole selected year, so it is a pure function of `year`.
    *
-   * Deliberately independent of the selected month. The two serve different
-   * purposes and defaulting the window to `selected` hid the current month: the
-   * selected month defaults to the newest month that has transactions (so the
-   * figures are not all zero on a fresh Plaid Sandbox), which is usually *behind*
-   * today. Anchoring the window to that put September last and October was never
-   * offered.
-   *
-   * `wYear`/`wMonth` carry the anchor once the user has paged with the arrows,
-   * and are clamped so a future month can never appear.
+   * There used to be a separate six-month window with its own `wYear`/`wMonth`
+   * parameters, which was a second piece of state that could disagree with the
+   * month whose figures were on screen - and it hid half the year, since reaching
+   * October from a window ending in September meant pressing an arrow.
    */
-  const anchorYear =
-    Number.parseInt(single(params.wYear) ?? "", 10) || currentYear;
-  const anchorMonthRaw =
-    Number.parseInt(single(params.wMonth) ?? "", 10) || currentMonth;
-
-  const currentIndex = currentYear * 12 + (currentMonth - 1);
-  const anchorIndex = Math.min(
-    anchorYear * 12 + (anchorMonthRaw - 1),
-    currentIndex,
-  );
-  const stripMonths = buildWindow(anchorIndex, 6);
+  const stripMonths = buildYear(year);
 
   const [
     groups,
@@ -151,8 +136,6 @@ export default async function BudgetsPage({
         years={yearRange.years}
         currentYear={currentYear}
         currentMonth={currentMonth}
-        anchorYear={Math.floor(anchorIndex / 12)}
-        anchorMonth={(anchorIndex % 12) + 1}
       />
 
       <BudgetSummary totals={summary} />
@@ -205,15 +188,12 @@ export default async function BudgetsPage({
   );
 }
 
-/** Six-month window ending at `anchorIndex`, as 1-based { year, month }. */
-function buildWindow(
-  anchorIndex: number,
-  size: number,
-): { year: number; month: number }[] {
-  return Array.from({ length: size }, (_, offset) => {
-    const index = anchorIndex - (size - 1) + offset;
-    return { year: Math.floor(index / 12), month: (index % 12) + 1 };
-  });
+/** All twelve months of `year`, ascending, as 1-based { year, month }. */
+function buildYear(year: number): { year: number; month: number }[] {
+  return Array.from({ length: 12 }, (_, offset) => ({
+    year,
+    month: offset + 1,
+  }));
 }
 
 
