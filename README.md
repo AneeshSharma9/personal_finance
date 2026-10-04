@@ -477,11 +477,28 @@ updates the row — that is what lets the UI save on blur.
 The count on the budgets page links to `/budgets/unassigned?year=&month=`: the
 month's spending with no bucket, one row per transaction, each routed by hand.
 
-**Assign unassigned** and this page do different jobs. The button runs the rules
-over everything still null, which is right for the transactions the engine *can*
-place and useless for the ones it cannot — a landlord payment with no recognisable
-merchant, a split transaction, anything where Plaid's category is simply wrong.
-Those need a person, one row at a time.
+**Routing is automatic and there is no button.** `applyBudgetRules` runs after every
+Plaid sync (`sync-items.ts`), after every webhook, and after every rule or merge
+change, so nothing waits on the user pressing anything. The budgets page used to
+carry an **Assign unassigned** button and it was a no-op in practice: with an
+"Everything Else" bucket present the engine leaves nothing unrouted, because
+spending that no rule claims falls through to the catch-all as its last step.
+Pressing it re-ran the same matcher over the same empty set.
+
+The budgets page now shows a warning line **only when the count is non-zero** —
+"N transactions ($X) aren't in a bucket yet" — linking to the queue. Nothing is
+rendered at all in the normal case.
+
+This went through three versions, and the progression is the point. A permanent
+tile with a button asked the user to do by hand what the sync had already done. A
+permanent tile *explaining* that assignment was automatic and there was nothing to
+press was honest but still occupied the top of the page with a non-event. A tile
+that appears precisely when it has something to say needs no explanation the rest
+of the time.
+
+The count is the only signal, and it is enough: with an "Everything Else" bucket it
+is 0, and it is non-zero only for a transaction that arrived before any bucket
+existed or income with no earnings bucket to go to.
 
 Rows leave the list as they are assigned, which is the confirmation. **Ignore**
 takes a row out of the queue without bucketing it: `excluded` keeps it visible

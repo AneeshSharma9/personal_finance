@@ -64,7 +64,6 @@ export function BudgetEditor({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   async function call(
     input: RequestInfo,
@@ -102,29 +101,6 @@ export function BudgetEditor({
 
   const deleteBudget = (id: number) =>
     call(`/api/budgets?id=${id}`, { method: "DELETE" });
-
-  /**
-   * Hand the still-null transactions to the rules.
-   *
-   * Only ever fills empty buckets, so this cannot undo a manual choice - which
-   * is also why the "clear everything and start again" variant is gone. It
-   * cleared manual assignments too, and there was no way to tell afterwards
-   * which of them had been deliberate.
-   */
-  const applyRules = async () => {
-    setNotice(null);
-    const response = await call("/api/budgets/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (!response) return;
-    const data = (await response.json()) as {
-      assigned: number;
-      scanned: number;
-    };
-    setNotice(`Routed ${data.assigned} of ${data.scanned} unassigned transactions.`);
-  };
 
   /**
    * Which bucket already claims each category, so the picker can show the options
@@ -169,18 +145,10 @@ export function BudgetEditor({
           {error}
         </p>
       ) : null}
-      {notice ? (
-        <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-          {notice}
-        </p>
-      ) : null}
-
-      <ApplyRulesBar
+      <UnassignedWarning
         unassigned={unassigned}
         year={year}
         month={month}
-        pending={pending}
-        onApply={() => void applyRules()}
       />
 
       {/*
@@ -259,60 +227,41 @@ export function BudgetEditor({
 }
 
 /**
- * The automatic-assignment bar: what is still unrouted, and the two ways out.
+ * A warning, shown only when something is actually unfiled.
  *
- * "Assign unassigned" runs the rules over everything still null. The count links
- * to the queue for the transactions the rules *cannot* place - a landlord
- * payment with no recognisable merchant, a split transaction, anything where
- * Plaid's category is wrong. One button cannot do both jobs, and it used to be
- * the only one, so those transactions were simply stuck.
+ * This used to be a permanent "Automatic assignment" tile with a button on it, then
+ * a permanent tile explaining that assignment was automatic and there was nothing
+ * to press. Both were noise: with an "Everything Else" bucket the engine leaves
+ * nothing unrouted, so the count is 0 and there is no news.
+ *
+ * Now it renders only when the count is non-zero, and says only the one useful
+ * thing - there are N transactions and here is where to put them. A tile that
+ * appears precisely when it has something to say does not need to explain itself
+ * the rest of the time.
  */
-function ApplyRulesBar({
+function UnassignedWarning({
   unassigned,
   year,
   month,
-  pending,
-  onApply,
 }: {
   unassigned: SpendSummary;
   /** 0-based, as the page holds it; only used to build the link. */
   year: number;
   month: number;
-  pending: boolean;
-  onApply: () => void;
 }) {
-  const queue = `/budgets/unassigned?year=${year}&month=${month + 1}`;
+  if (unassigned.unassigned === 0) return null;
 
   return (
-    <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-medium">Automatic assignment</p>
-          {unassigned.unassigned === 0 ? (
-            <p className="text-xs text-neutral-500">
-              Every transaction is in a bucket.
-            </p>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              <Link href={queue} className="underline underline-offset-2">
-                {unassigned.unassigned} transaction
-                {unassigned.unassigned === 1 ? "" : "s"} (
-                {formatCurrency(unassigned.unassignedTotal)}) are not in a
-                bucket yet
-              </Link>
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={onApply}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-        >
-          Assign unassigned
-        </button>
-      </div>
-    </section>
+    <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+      <Link
+        href={`/budgets/unassigned?year=${year}&month=${month + 1}`}
+        className="underline underline-offset-2"
+      >
+        {unassigned.unassigned} transaction
+        {unassigned.unassigned === 1 ? "" : "s"} (
+        {formatCurrency(unassigned.unassignedTotal)}) aren&apos;t in a bucket yet
+      </Link>
+    </p>
   );
 }
 

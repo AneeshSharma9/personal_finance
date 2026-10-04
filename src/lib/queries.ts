@@ -349,7 +349,40 @@ export async function getBudgetsWithActuals(
     });
   }
 
+  for (const rows of Object.values(groups)) {
+    sortBudgetRows(rows);
+  }
+
   return groups;
+}
+
+/**
+ * Display order for a budget group: the remainder bucket last, then biggest first.
+ *
+ * The remainder bucket is pinned rather than sorted, because its whole purpose is
+ * to be what is left over. Sorting it by size would put a $30 "Everything Else"
+ * between Rent and Insurance and read as though it were a peer of them - it is the
+ * one row on the page whose size is an output rather than a decision.
+ *
+ * The rest sort by budgeted amount descending, so the rows you decided about are
+ * at the top and the small ones you set once and forgot are at the bottom. Ordering
+ * used to come from `sortOrder`, which is a manual arrangement made at creation
+ * time and never revisited - fine when a bucket's figure changed, wrong once it did.
+ *
+ * Ties break on name rather than leaving insertion order to decide, so the page
+ * cannot reshuffle between two renders that mean the same thing.
+ *
+ * This is display order only. Which bucket wins a category both have claimed is
+ * still `sortOrder`, in `loadRuleSet`, and is deliberately not changed here: that is
+ * a routing decision, not a presentation one, and following the display order would
+ * silently re-route transactions.
+ */
+export function sortBudgetRows(rows: BudgetRowResult[]): BudgetRowResult[] {
+  return rows.sort((a, b) => {
+    if (a.isCatchAll !== b.isCatchAll) return a.isCatchAll ? 1 : -1;
+    if (a.budgeted !== b.budgeted) return b.budgeted - a.budgeted;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 export type BudgetRowResult = {
