@@ -48,7 +48,7 @@ export function SyncStatus({
       {needsAttention.length > 0 ? (
         <Link
           href="/accounts"
-          className="text-amber-700 underline underline-offset-2 dark:text-amber-400"
+          className="rounded-md px-2 py-1 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
         >
           {needsAttention.length === 1
             ? "1 institution needs attention"

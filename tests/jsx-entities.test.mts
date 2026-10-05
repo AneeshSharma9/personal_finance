@@ -130,8 +130,18 @@ test("no HTML entity is hidden inside a JS string literal", () => {
   );
 });
 
-test("the back link that shipped broken is clean", () => {
+test("the back arrow that shipped broken is clean", () => {
+  /*
+   * Was on the bucket page; the back links moved into their own component, so that
+   * is where the arrow lives now. The bug was an HTML entity inside a JS string
+   * rendering as the literal text "&larr;", so what matters is that wherever the
+   * arrow is written, it is written with the escape.
+   */
+  const component = stripComments(readFileSync("src/components/back-link.tsx", "utf8"));
+  assert.doesNotMatch(component, /&larr;/);
+  assert.match(component, /\\u2190/, "and the escape is used instead");
+
+  // The page that used to carry the bug no longer writes an arrow at all.
   const page = stripComments(readFileSync("src/app/(app)/budgets/[id]/page.tsx", "utf8"));
-  assert.doesNotMatch(page, /&larr;/);
-  assert.match(page, /\\u2190/, "and the escape is used instead");
+  assert.doesNotMatch(page, /larr|\\u2190/);
 });

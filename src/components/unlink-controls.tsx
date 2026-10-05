@@ -273,7 +273,7 @@ export function UnlinkButton({
               setConfirmText("");
             }}
             disabled={busy}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700"
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
           >
             Cancel
           </button>
@@ -281,7 +281,7 @@ export function UnlinkButton({
             type="button"
             onClick={unlink}
             disabled={!canConfirm}
-            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40"
           >
             {busy ? "Unlinking..." : "Unlink permanently"}
           </button>
@@ -379,7 +379,7 @@ export function RemoveAccountButton({
             type="button"
             onClick={() => setOpen(false)}
             disabled={busy}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700"
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
           >
             Cancel
           </button>
@@ -387,7 +387,7 @@ export function RemoveAccountButton({
             type="button"
             onClick={remove}
             disabled={busy}
-            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40"
           >
             {busy ? "Removing..." : "Remove"}
           </button>

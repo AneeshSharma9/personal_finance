@@ -326,7 +326,9 @@ A row stores two deliberately separate things:
 ### Where a bucket's categories are edited
 
 On the bucket's **own page**, in a **Match transactions by category** disclosure —
-not on its row in the budgets table.
+not on its row in the budgets table. The summary line is the title and nothing
+else; it used to append the current list, which restated what the panel underneath
+shows the moment you open it and made the collapsed row twice as tall as needed.
 
 On the row it was a strip of removable chips plus a "+ category" button and an inline
 picker. A row is a grid cell, so the chips wrapped, the button wrapped, and a bucket
@@ -349,6 +351,21 @@ stops an edit to one category silently resetting the month's figure.
 `claimedBy` is built server-side — category to owning bucket, excluding this one and
 excluding the catch-all — so the client cannot disagree with the editor's own list
 about who owns a category.
+
+The picker has a search box, because real data has a few dozen distinct Plaid
+categories and the list is unusable without one. It matches both the display name
+and the raw value, since people search for either. **Searching widens the list rather
+than narrowing the addable one**: filtering to only what can be added means searching
+for a category another bucket already has returns nothing at all, which reads as "no
+such category" when it is right there in the user's own transactions. So a search
+shows every match and the taken ones are struck through, disabled, and attributed to
+the bucket holding them.
+
+The panel also states what "no categories" means, because the obvious reading is
+wrong. Such a bucket is not inert — merchant rules, amount rules and explicitly
+tagged loan payments all still route into it. An earlier version called this
+"display only", which claimed the opposite, and several of the user's buckets are
+funded entirely by tagged loan payments while claiming nothing at all.
 
 An already-claimed category is **greyed out** in the picker rather than hidden,
 with a tooltip naming the bucket that has it. Hiding it meant a category that had
@@ -472,6 +489,49 @@ curl -X PUT localhost:3000/api/rules -H 'Content-Type: application/json' \
 `PUT /api/budgets` upserts on `(kind, name)`, so saving the same name again
 updates the row — that is what lets the UI save on blur.
 
+### Ignore rules run on sync, not only when you save them
+
+There are two rule engines, and only one of them could perform an "ignore" step.
+
+`applyRulesToHistory` (`rules.ts`) handles full steps — bucket, loan and ignore — but
+is called from exactly one place: `api/rules/route.ts`, when a rule is saved.
+`applyBudgetRules` (`budget-engine.ts`) runs after every Plaid sync and webhook, and
+only ever assigned buckets.
+
+The cause was one line in `loadRuleSet`:
+
+```ts
+const bucketRules = rules.filter((rule) => rule.budgetId !== null);
+```
+
+Correct for routing — an ignore step has no bucket to route into — and wrong for
+exclusion. Ignore rules have `budgetId = null`, so they were dropped before the matcher
+saw them. The visible effect: an ignore rule worked on transactions that existed when
+it was saved, and did nothing for anything that arrived afterwards. A Capital One card
+payment landed in "Everything Else" as spending while every older identical payment
+sat correctly ignored, thirteen of them and then a fourteenth.
+
+Worse, it was permanent. `applyBudgetRules` only fills `budget_id IS NULL`, and
+`rules.ts` documents that it "only excludes rows that have no bucket" — so once the
+transaction had a bucket, nothing would ever revisit it, by either engine.
+
+`exclusionRules` now carries the ignore steps past that filter, and
+`matchesExclusion` asks the question separately from `resolveBucket`. Separate on
+purpose: routing answers *where money goes*, which has no answer for "nowhere", and
+`resolveBucket`'s precedence is not disturbed by this.
+
+**Ignored and bucketed are not exclusive.** A row can be both, and the codebase
+depends on it — two of the user's rules match "uas", one ignoring it and one filing it
+into Savings/Debt, and the row is meant to end up excluded *and* bucketed: excluded so
+it counts as neither income nor spending, bucketed so it stays visible where it was
+put. An early `continue` on the ignore would have quietly broken the second rule for
+every future transaction.
+
+An unparseable amount rule parses to `NaN`, not `0`. The obvious stand-in is wrong:
+`Math.abs(0 - 0) < 0.005` is true, so an unparseable rule would match every
+zero-value transaction — and `Number("")` is `0` too, which is how an empty match value
+gets in.
+
 ### The unassigned queue
 
 The count on the budgets page links to `/budgets/unassigned?year=&month=`: the
@@ -579,6 +639,110 @@ not move the other bars.
 
 The breakdown comes from `getCategoryBreakdownByBucket`, summed per (bucket,
 category) in SQL, and every row sums exactly to its bucket's total.
+
+### Interaction styling: rows, buttons, back links
+
+Three consistent treatments, all taken from what already existed in the app rather
+than invented.
+
+**Rows highlight, and the whole row is the link.** A budget row used to be clickable
+only on the bucket name, with an underline appearing on hover to say so. The
+underline was a poor signal for a target the size of the row, and it marked four of
+the row's five columns as not clickable.
+
+The row is now the link, via `relative` on the row plus a stretched `::after` on the
+name — not an `<a>` around the row, because the row contains a real `<input>` and a
+delete `<button>` and neither is valid inside an anchor. Those two controls are lifted
+above the stretched overlay with `relative z-10`. **Without that they sit underneath
+it**, so typing a budget amount or deleting a bucket would navigate to the bucket
+page instead: a nasty failure, because the budget field is the thing you use most on
+that page.
+
+Hover is the nav's: `hover:bg-neutral-100 dark:hover:bg-neutral-800`.
+
+**Four button styles**, and every button on the site uses one:
+
+| | style |
+|---|---|
+| primary | `bg-neutral-900 text-white`, hover `bg-neutral-700` |
+| danger | `bg-red-600 text-white`, hover `bg-red-700` |
+| outlined | `border`, hover `bg-neutral-100` |
+| ghost | no border or fill, hover `bg-neutral-100` |
+
+Solid buttons darken rather than gaining a light background, which would wash them
+out. Text buttons that were `className="text-xs underline"` became ghost buttons,
+because an underlined label and a button are different things.
+
+The dark-mode hover for a solid button is `dark:hover:bg-neutral-300`, not `-200`.
+The dark primary is `dark:bg-white`, and white to `neutral-200` is imperceptible —
+which is exactly how the first pass went unnoticed on every primary button in the
+app, the rules page's **Save rule** included. Worth knowing when auditing: `hover:bg-*`
+being present in the markup is not evidence that it is *visible*.
+
+Two controls were missed in the first pass and are worth naming, because both looked
+already-styled and neither was: the bucket page's **Previous / Next** (outlined, so
+`border-neutral-300` on white reads as a button until you hover and nothing happens)
+and the **Match transactions by category** disclosure (a `<summary>`, so it is not a
+`<button>` at all and an audit that only counts buttons misses it permanently). An
+audit of `grep -c "<button"` finds neither; the same sweep now covers `<summary>`.
+
+**A hover colour must never also be a surface colour.** The dark-mode hover was
+`dark:hover:bg-neutral-800` site-wide, chosen because it lifts off the page background
+(`#171717`, a neutral-900). It was applied without checking what else is *painted*
+neutral-800 — and 34 places are, including every table's column header strip.
+
+So hovering the first row of a budgets table painted it the exact colour of the
+header directly above, and the row vanished into it. It was reported as "there is no
+visible border under the table headers in dark mode", which describes the symptom
+accurately and not the cause: the border was fine, the row was matching the header.
+
+It affected six components, not one. `neutral-700` is not used as a surface anywhere,
+so rows and controls inside panels now hover to that — still a subtle lift against the
+page, and now visible against the header too. Chrome outside those panels is
+untouched, where `neutral-800` was already right.
+
+This could not be caught by the "does every button have a hover" audit, which passed
+while all of these hovers were invisible. `tests/hover-contrast.test.mts` compares the
+two colour sets within each file instead, and names the header-strip case specifically
+so that recolouring the header cannot quietly satisfy it.
+
+That audit reports 50 buttons with 0 without a hover state. It resolves `className={CONST}`
+references, and it strips comments first — otherwise every `<button` written inside an
+explanatory comment about buttons counts as a real one, which is how two phantom
+failures turned up while doing this.
+
+**Back links are a pill.** `BackLink` is deliberately a different *shape* — borderless
+`rounded-full`, muted, one step smaller, with a leading arrow that nudges left on
+hover — rather than a different shade. A back link sits directly above pages full of
+`rounded-md` action buttons, and two greys side by side would read as "another
+button". It replaced an underlined text link, which had the opposite problem: it
+looked like body text that happened to be clickable.
+
+**No underlines remain anywhere.** The section headings were the last holdout: their
+tooltip was marked with a dotted underline, which read as a rule dividing the header
+from the table rather than as "this has more on it". They now use the same background
+hover as every other row and control.
+
+### Section descriptions are tooltips, not prose
+
+The budgets page's three section headers — Earnings, Budget Basics, Budget
+Categories — carry their explanations as a `title` on the heading rather than as a
+line of text underneath it.
+
+They were always on screen and always the same, so they had stopped being read: three
+permanent lines of static prose above the tables, pushing the numbers down. On hover
+they are there when wanted and out of the way otherwise.
+
+`title` on its own would be mouse-only — it does not fire on keyboard focus, so the
+description would be unreachable without a pointer. The heading is therefore
+`tabIndex={0}` with a focus ring, and the heading text carries a dotted underline to
+mark it as holding more than its own words. The `ⓘ` is `aria-hidden`, because the
+focusable element is the heading itself and an announced glyph would just be noise.
+
+All three headers share one `SectionHeader` component, so the earnings description
+("Income received this month. Deposits are routed here automatically.") is defined in
+the same place as the two budget ones rather than hand-written into a second header
+markup that could drift.
 
 ### Opening a bucket from the cash flow
 

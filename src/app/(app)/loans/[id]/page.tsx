@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { BackLink } from "@/components/back-link";
 import { LoanActions } from "@/components/loan-actions";
 import { TrendChart } from "@/components/trend-chart";
 import { requireUser } from "@/lib/auth";
@@ -75,7 +76,7 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-1">
         <p className="text-xs text-neutral-500">
-          <Link href="/accounts" className="underline underline-offset-2">
+          <Link href="/accounts" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
             Accounts
           </Link>{" "}
           · Manual loans
@@ -158,7 +159,7 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
         {payments.length === 0 ? (
           <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
             Nothing tagged yet. Open the{" "}
-            <Link href="/transactions" className="underline">
+            <Link href="/transactions" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
               Transactions
             </Link>{" "}
             page and pick this loan on a payment.
@@ -182,7 +183,7 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
                     {payment.payee ? (
                       <Link
                         href={`/transactions?q=${encodeURIComponent(payment.payee)}`}
-                        className="underline underline-offset-2"
+                        className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100"
                       >
                         view
                       </Link>
@@ -244,9 +245,7 @@ function NotFound() {
     <div className="mx-auto max-w-3xl">
       <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
         That loan does not exist.{" "}
-        <Link href="/accounts" className="underline">
-          Back to accounts
-        </Link>
+        <BackLink href="/accounts">Accounts</BackLink>
       </p>
     </div>
   );

@@ -86,7 +86,7 @@ export function CategoryEditor({
             ? "Category set by you. Click to change."
             : "Set by Plaid. Click to change."
         }
-        className={`rounded px-1 py-0.5 text-left underline-offset-2 hover:underline ${
+        className={`rounded px-1 py-0.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
           isOverridden ? "text-blue-700 dark:text-blue-400" : ""
         }`}
       >

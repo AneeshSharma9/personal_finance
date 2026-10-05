@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { BackLink } from "@/components/back-link";
 import { HoldingsTable, totalValue } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
 import { RemoveAccountButton } from "@/components/unlink-controls";
@@ -59,7 +60,7 @@ export default async function AccountPage({
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-1">
         <p className="text-xs text-neutral-500">
-          <Link href="/accounts" className="underline underline-offset-2">
+          <Link href="/accounts" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
             Accounts
           </Link>
         </p>
@@ -160,7 +161,7 @@ export default async function AccountPage({
           {transactionCount > 0 ? (
             <Link
               href={`/transactions?accountId=${accountId}`}
-              className="underline underline-offset-2"
+              className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               {transactionCount} transaction
               {transactionCount === 1 ? "" : "s"}
@@ -199,7 +200,7 @@ function NotFound() {
   return (
     <div className="mx-auto max-w-3xl">
       <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
-        That account does not exist. <Link href="/accounts" className="underline">Back to accounts</Link>
+        That account does not exist. <BackLink href="/accounts">Accounts</BackLink>
       </p>
     </div>
   );

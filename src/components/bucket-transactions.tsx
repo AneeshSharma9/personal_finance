@@ -147,7 +147,7 @@ export function BucketTransactions({
                   ? `Stop ignoring ${transaction.merchantName ?? transaction.name}`
                   : `Ignore ${transaction.merchantName ?? transaction.name}`
               }
-              className={`shrink-0 rounded p-1 transition hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+              className={`shrink-0 rounded p-1 transition hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
                 transaction.excluded
                   ? "text-neutral-500 dark:text-neutral-400"
                   : "text-neutral-300 hover:text-neutral-600 dark:text-neutral-600 dark:hover:text-neutral-300"

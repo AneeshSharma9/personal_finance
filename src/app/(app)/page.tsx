@@ -218,7 +218,7 @@ export default async function DashboardPage() {
               {spendSummary.unassigned > 0 ? (
                 <Link
                   href={`/budgets/unassigned?year=${fallback.year}&month=${fallback.month + 1}`}
-                  className="text-xs underline underline-offset-2"
+                  className="rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 >
                   {spendSummary.unassigned} unbudgeted (
                   {formatCurrency(spendSummary.unassignedTotal)}) &rarr;
@@ -314,15 +314,15 @@ export default async function DashboardPage() {
 
       <p className="text-xs text-neutral-500">
         Using {items.length} of the 10 Plaid Trial Item slots.{" "}
-        <Link href="/accounts" className="underline underline-offset-2">
+        <Link href="/accounts" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
           Manage accounts
         </Link>{" "}
         &middot;{" "}
-        <Link href="/budgets" className="underline underline-offset-2">
+        <Link href="/budgets" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
           Budgets
         </Link>{" "}
         &middot;{" "}
-        <Link href="/rules" className="underline underline-offset-2">
+        <Link href="/rules" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
           Rules
         </Link>
       </p>

@@ -803,7 +803,7 @@ return (
             <button
               type="button"
               onClick={() => setExpandedId(null)}
-              className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+              className="rounded-md px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             >
               Close
             </button>

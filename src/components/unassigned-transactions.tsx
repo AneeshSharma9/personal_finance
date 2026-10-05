@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { BackLink } from "@/components/back-link";
 import { formatCurrency, formatDate, humanizeCategory } from "@/lib/format";
 import type { UnassignedTransaction } from "@/lib/queries";
 
@@ -110,9 +110,7 @@ export function UnassignedTransactions({
                 transactions.length === 1 ? "" : "s"
               }, ${formatCurrency(total)}`}
         </p>
-        <Link href={back} className="text-xs underline">
-          Back to budgets
-        </Link>
+        <BackLink href={back}>Budgets</BackLink>
       </div>
 
       {error ? (
@@ -180,7 +178,7 @@ export function UnassignedTransactions({
                       void assign(transaction.id, transaction.suggestedBudgetId!)
                     }
                     title={`File this in ${bucketName.get(transaction.suggestedBudgetId) ?? "the matching bucket"}`}
-                    className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                    className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-700"
                   >
                     Use this
                   </button>
@@ -191,7 +189,7 @@ export function UnassignedTransactions({
                   disabled={pending || saving !== null}
                   onClick={() => void ignore(transaction.id)}
                   title="Keep this out of every bucket - it is neither income nor spending"
-                  className="text-xs text-neutral-400 underline hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-200"
+                  className="rounded-md px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-700"
                 >
                   Ignore
                 </button>

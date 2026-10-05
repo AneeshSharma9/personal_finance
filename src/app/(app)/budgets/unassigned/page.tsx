@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
+import { BackLink } from "@/components/back-link";
 import { UnassignedTransactions } from "@/components/unassigned-transactions";
 import { requireUser } from "@/lib/auth";
 import { monthRange } from "@/lib/format";
@@ -75,9 +75,7 @@ export default async function UnassignedPage({
           })}{" "}
           &middot; spending with no bucket. Pick one per transaction; the choice
           sticks, because the rules only ever fill in empty buckets.{" "}
-          <Link href={`/budgets?year=${year}&month=${month + 1}`} className="underline">
-            Back to budgets
-          </Link>
+          <BackLink href={`/budgets?year=${year}&month=${month + 1}`}>Budgets</BackLink>
         </p>
       </header>
 

@@ -122,7 +122,7 @@ export default async function TransactionsPage({
 
         <button
           type="submit"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           Apply
         </button>
@@ -135,7 +135,7 @@ export default async function TransactionsPage({
         {category || search || account ? (
           <a
             href="/transactions"
-            className="rounded-md px-2 py-2 text-sm underline"
+            className="rounded-md px-2 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-700"
           >
             Clear
           </a>

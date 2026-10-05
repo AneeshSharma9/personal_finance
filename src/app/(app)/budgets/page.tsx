@@ -179,7 +179,7 @@ export default async function BudgetsPage({
         buckets, which does not belong under a page about monthly limits.
       */}
       <p className="text-sm text-neutral-500">
-        <a href="/rules" className="underline">
+        <a href="/rules" className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
           Manage rules
         </a>{" "}
         to route transactions automatically, including past ones.

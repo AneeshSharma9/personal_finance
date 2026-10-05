@@ -94,7 +94,7 @@ export function ManualLoans({ initialLoans }: { initialLoans: ManualLoan[] }) {
         <button
           type="button"
           onClick={() => setCreating((value) => !value)}
-          className="text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 shrink-0"
         >
           {creating ? "Cancel" : "Add a loan"}
         </button>
@@ -244,7 +244,7 @@ function LoanForm({
       <button
         type="submit"
         disabled={disabled}
-        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-white dark:text-neutral-900"
+        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
       >
         Add loan
       </button>
@@ -272,7 +272,7 @@ function LoanCard({
       */}
       <Link
         href={`/loans/${loan.id}`}
-        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-100 dark:hover:bg-neutral-700"
       >
         <div className="min-w-0">
           <p className="truncate font-medium">{loan.name}</p>

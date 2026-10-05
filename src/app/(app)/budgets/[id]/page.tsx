@@ -10,6 +10,7 @@ import {
   getLatestTransactionMonth,
   getTransactionsInBucket,
 } from "@/lib/queries";
+import { BackLink } from "@/components/back-link";
 import { BucketCategories } from "@/components/bucket-categories";
 import { BucketTransactions } from "@/components/bucket-transactions";
 
@@ -141,24 +142,15 @@ export default async function BucketPage({
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <header>
-        <Link
+        <BackLink
           href={
             range
               ? `/budgets/cash-flow?year=${year}&month=${month + 1}`
               : `/budgets?year=${year}&month=${month + 1}`
           }
-          className="text-xs text-neutral-500 underline"
         >
-          {/*
-            A JS string, so the arrow needs the escape. Writing `&larr;` here
-            rendered the entity literally - "&larr; Budgets" - because JSX only
-            decodes entities in children position, and this sits inside a ternary
-            within an expression. The entity form was correct here until the two
-            branches needed to differ.
-          */}
-          {"\u2190 "}
           {range ? "Cash flow" : "Budgets"}
-        </Link>
+        </BackLink>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">{budget.name}</h1>
         <p className="text-sm text-neutral-500">
           {monthLabel} &middot; {formatCurrency(budgeted)} budgeted
@@ -180,7 +172,7 @@ export default async function BucketPage({
         <p className="text-xs text-neutral-500">
           <Link
             href={`/budgets/${budget.id}?year=${year}&month=${month + 1}`}
-            className="underline underline-offset-2"
+            className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           >
             Switch to {monthLabel} only
           </Link>
@@ -228,13 +220,13 @@ function MonthNav({
     <nav className="flex items-center gap-2 text-sm">
       <Link
         href={`/budgets/${bucketId}?year=${prev.getUTCFullYear()}&month=${prev.getUTCMonth() + 1}`}
-        className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700"
+        className="rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-400 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
       >
         Previous
       </Link>
       <Link
         href={`/budgets/${bucketId}?year=${next.getUTCFullYear()}&month=${next.getUTCMonth() + 1}`}
-        className="rounded-md border border-neutral-300 px-3 py-2 dark:border-neutral-700"
+        className="rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-400 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
       >
         Next
       </Link>
@@ -246,9 +238,7 @@ function Invalid() {
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-semibold tracking-tight">Bucket not found</h1>
-      <Link href="/budgets" className="text-sm underline">
-        Back to budgets
-      </Link>
+      <BackLink href="/budgets">Budgets</BackLink>
     </div>
   );
 }

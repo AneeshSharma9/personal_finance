@@ -370,7 +370,7 @@ export function BudgetWorksheetForm({ saved }: { saved: WorksheetInput }) {
           type="button"
           onClick={save}
           disabled={status === "saving"}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           {status === "saving" ? "Saving…" : "Save worksheet"}
         </button>

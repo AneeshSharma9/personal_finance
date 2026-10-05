@@ -103,14 +103,14 @@ export function LoanActions({
               type="button"
               onClick={saveBalance}
               disabled={pending}
-              className="rounded-md border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
+              className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-700"
             >
               Save
             </button>
             <button
               type="button"
               onClick={() => setEditingBalance(false)}
-              className="px-1 text-xs text-neutral-500 underline"
+              className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 px-1"
             >
               Cancel
             </button>
@@ -122,7 +122,7 @@ export function LoanActions({
               setBalanceInput(String(loan.balance));
               setEditingBalance(true);
             }}
-            className="text-xs underline underline-offset-2"
+            className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 shrink-0"
           >
             Edit balance
           </button>
@@ -131,7 +131,7 @@ export function LoanActions({
 
       {untagTargets.length > 0 ? (
         <details className="text-sm">
-          <summary className="cursor-pointer text-xs text-neutral-600 underline dark:text-neutral-400">
+          <summary className="cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700">
             Un-tag a payment ({untagTargets.length})
           </summary>
           <p className="mt-1 text-xs text-neutral-500">
@@ -149,7 +149,7 @@ export function LoanActions({
                   type="button"
                   disabled={pending}
                   onClick={() => void untag(target.transactionId)}
-                  className="shrink-0 text-neutral-600 underline disabled:opacity-50 dark:text-neutral-400"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 shrink-0 disabled:opacity-50"
                 >
                   Un-tag
                 </button>
@@ -167,7 +167,7 @@ export function LoanActions({
         <button
           type="button"
           onClick={() => void remove()}
-          className="shrink-0 text-xs text-red-600 underline dark:text-red-400"
+          className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
         >
           Delete loan
         </button>

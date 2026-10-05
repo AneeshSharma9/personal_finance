@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { buildCashFlowGraph, cashFlowWindow, type CashFlowScope } from "@/lib/cash-flow";
 import { formatCurrency } from "@/lib/format";
 import { getCashFlow, getLatestTransactionMonth, getYearRange } from "@/lib/queries";
+import { BackLink } from "@/components/back-link";
 import { CashFlowPeriod } from "@/components/cash-flow-period";
 import { SankeyChart } from "@/components/sankey-chart";
 
@@ -87,12 +88,7 @@ export default async function CashFlowPage({
           <h1 className="text-2xl font-semibold tracking-tight">Cash flow</h1>
           <p className="text-sm text-neutral-500">{window.label}</p>
         </div>
-        <Link
-          href={`/budgets?year=${year}&month=${month}`}
-          className="text-sm text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-        >
-          Back to budgets
-        </Link>
+        <BackLink href={`/budgets?year=${year}&month=${month}`}>Budgets</BackLink>
       </header>
 
       <CashFlowPeriod
@@ -117,7 +113,7 @@ export default async function CashFlowPage({
             unassigned > 0 ? (
               <Link
                 href={`/budgets/unassigned?year=${year}&month=${month}`}
-                className="underline underline-offset-2"
+                className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 {formatCurrency(unassigned)} to file
               </Link>
@@ -177,7 +173,7 @@ export default async function CashFlowPage({
                         <Link
                           href={`/budgets/${node.budgetId}?${rangeSuffix}`}
                           title={`Every transaction in ${node.label}, ${window.label}`}
-                          className="after:absolute after:inset-0 after:content-[''] hover:underline underline-offset-2"
+                          className="after:absolute after:inset-0 after:content-['']"
                         >
                           {node.label}
                         </Link>

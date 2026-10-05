@@ -4,6 +4,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { WORKSHEET_DEFAULTS } from "@/lib/budget-worksheet";
 import { getBudgetWorksheet } from "@/lib/queries";
+import { BackLink } from "@/components/back-link";
 import { BudgetWorksheetForm } from "@/components/budget-worksheet-form";
 
 export const metadata: Metadata = { title: "Budget worksheet · Finance" };
@@ -29,12 +30,7 @@ export default async function WorksheetPage() {
             What you intend, working from gross pay down.
           </p>
         </div>
-        <Link
-          href="/budgets"
-          className="text-sm text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-        >
-          Back to budgets
-        </Link>
+        <BackLink href="/budgets">Budgets</BackLink>
       </header>
 
       {/*
@@ -43,7 +39,7 @@ export default async function WorksheetPage() {
       */}
       <p className="text-sm text-neutral-500">
         This is your plan. It is not compared against the{" "}
-        <Link href="/budgets" className="underline underline-offset-2">
+        <Link href="/budgets" className="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100">
           budgets page
         </Link>
         , which measures what your accounts actually did.

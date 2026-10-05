@@ -47,6 +47,29 @@ export type RuleSet = {
    * a loan rule mints a payment record and moves a debt balance.
    */
   loanRules: { loanId: number; matchType: string; value: string }[];
+  /**
+   * Rules whose only step is "ignore" — matching transactions count as neither
+   * income nor spending.
+   *
+   * Held apart from the bucket rules because they have no `budgetId`, and the line
+   * that builds `bucketRules` drops exactly those. That filter is correct for
+   * *routing* — there is nowhere to route to — but it made ignore rules invisible to
+   * this engine, which is the one that runs after every sync.
+   *
+   * The consequence was that an ignore rule only ever worked on transactions that
+   * already existed when it was saved. Anything that arrived afterwards was routed
+   * past it into the catch-all bucket, and because this engine only fills nulls,
+   * nothing would ever revisit it: a card payment sat in "Everything Else" as
+   * spending, permanently, while every older identical payment was correctly
+   * ignored. See `matchesExclusion`.
+   */
+  exclusionRules: {
+    matchType: "merchant" | "category" | "amount";
+    /** Lower-cased for merchant matching, upper-cased for category. */
+    value: string;
+    /** Parsed for amount rules; 0 otherwise, so it is never a live match. */
+    numericValue: number;
+  }[];
 };
 
 /**
@@ -164,6 +187,32 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
       value: rule.matchValue.toUpperCase(),
     }));
 
+  /*
+   * Built before the `budgetId !== null` filter above can drop them, so an ignore
+   * rule survives it. That filter is right for routing — there is nowhere to route
+   * to — and wrong for exclusion, which is the whole reason this list exists.
+   */
+  const exclusionRules: RuleSet["exclusionRules"] = rules
+    .filter((rule) => rule.exclude === true && rule.budgetId === null)
+    .map((rule) => ({
+      matchType: rule.matchType as "merchant" | "category" | "amount",
+      value:
+        rule.matchType === "merchant"
+          ? rule.matchValue.toLowerCase()
+          : rule.matchValue.toUpperCase(),
+      /*
+       * NaN, deliberately, for a value that is not a number.
+       *
+       * The obvious stand-in is 0, and it is wrong: `Math.abs(0 - 0) < 0.005` is
+       * true, so an unparseable amount rule would quietly match every zero-value
+       * transaction. `Number("")` is also 0, which is how an empty match value gets
+       * in. NaN cannot equal anything under subtraction, so the comparison is false
+       * however the arithmetic resolves - and the guard in `matchesExclusion` says so
+       * locally rather than making the reader know that.
+       */
+      numericValue: parseAmountRule(rule.matchValue),
+    }));
+
   const { bucketCategories, catchAllBudgetId } = bucketCategoryRules(budgets);
 
   return {
@@ -176,7 +225,80 @@ export async function loadRuleSet(userId: string): Promise<RuleSet> {
       .filter((budget) => budget.budgetKind === "earning")
       .map((budget) => budget.id),
     loanRules,
+    exclusionRules,
   };
+}
+
+/**
+ * Does an explicit "ignore" rule claim this transaction?
+ *
+ * Deliberately separate from `resolveBucket`, which decides *where* money goes and
+ * so has no answer for "nowhere". Keeping it out here means the routing precedence is
+ * untouched and every existing test still describes the same function — this is a
+ * second question, not a correction to the first.
+ *
+ * It is asked before routing, and the two outcomes are independent rather than
+ * exclusive: a transaction can be both ignored and bucketed, and the codebase relies
+ * on that. Two of the user's rules match "uas", one ignoring it and one filing it
+ * into Savings/Debt, and the row ends up excluded *and* bucketed — excluded so it
+ * counts as neither income nor spending, bucketed so it is still visible where the
+ * user put it rather than vanishing. Treating ignore as an early `continue` would
+ * have quietly stopped the second rule working.
+ */
+/** A rule's match value as a number, or NaN when it is not one. */
+function parseAmountRule(value: string): number {
+  if (value.trim().length === 0) return Number.NaN;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+export function matchesExclusion(
+  row: {
+    merchantName: string | null;
+    name: string | null;
+    categoryOverride: string | null;
+    plaidCategoryPrimary: string | null;
+    plaidCategoryDetailed: string | null;
+    amount?: number;
+  },
+  rules: RuleSet,
+): boolean {
+  if (rules.exclusionRules.length === 0) return false;
+
+  // Exact figures first, for the same reason resolveBucket does: an amount is the
+  // most specific thing a rule can say about a transaction.
+  if (row.amount !== undefined) {
+    const magnitude = Math.abs(row.amount);
+    for (const rule of rules.exclusionRules) {
+      if (
+        rule.matchType === "amount" &&
+        Number.isFinite(rule.numericValue) &&
+        Math.abs(rule.numericValue - magnitude) < 0.005
+      ) {
+        return true;
+      }
+    }
+  }
+
+  const haystack = `${row.merchantName ?? ""} ${row.name ?? ""}`.toLowerCase();
+  for (const rule of rules.exclusionRules) {
+    if (
+      rule.matchType === "merchant" &&
+      rule.value.length > 0 &&
+      haystack.includes(rule.value)
+    ) {
+      return true;
+    }
+  }
+
+  const candidates = categoryCandidates(row);
+  for (const rule of rules.exclusionRules) {
+    if (rule.matchType === "category" && matchesAny(candidates, rule.value)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -396,11 +518,19 @@ export async function applyBudgetRules(userId: string): Promise<AssignmentResult
     const amount = toNumber(row.amount);
     const accountType = accountTypes.get(String(row.accountId)) ?? "other";
 
-    // A card payment reduces a balance; it is neither income nor spending, so it
-    // is recorded as excluded rather than given a bucket that would distort one.
-    if (isBalanceMovement({ amount, accountType })) {
+    /*
+     * Two independent reasons a row is neither income nor spending, and a row can be
+     * both ignored *and* bucketed — see `matchesExclusion`.
+     */
+    const ignored =
+      matchesExclusion({ ...row, amount }, rules) ||
+      // A card payment reduces a balance; it is not spending, so it is recorded as
+      // excluded rather than given a bucket that would distort one.
+      isBalanceMovement({ amount, accountType });
+    if (ignored) {
       exclusions.push(row.id);
-      continue;
+      // Deliberately no `continue`. A bucket rule may also match, and the row should
+      // still be filed so it stays visible where the user put it.
     }
 
     const budgetId = resolveBucket({ ...row, amount, accountType }, rules);

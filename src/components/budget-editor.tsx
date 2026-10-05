@@ -10,6 +10,7 @@ import {
   humanizeCategory,
   parseCurrencyInput,
 } from "@/lib/format";
+import { columnTone, columnValue, type Column } from "@/lib/budget-columns";
 import { selectAllProps } from "@/lib/select-all";
 
 export type BudgetRow = {
@@ -63,6 +64,22 @@ export function BudgetEditor({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+
+  /*
+   * Which money figure the tables show: what was spent, or what is left.
+   *
+   * One piece of state for all three tables rather than one per table. The three
+   * tables are read as one budget — the summary above them adds their totals
+   * together — so letting one show Actual while another shows Remaining produced a
+   * page where two columns claimed the same name and meant different things, and
+   * the only way to tell them apart was to count rows.
+   *
+   * Local state, not the URL, matching the "Add bucket" toggles: this is a viewing
+   * preference for this visit, not a different budget.
+   */
+  const [column, setColumn] = useState<Column>("actual");
+  const toggleColumn = () =>
+    setColumn((current) => (current === "actual" ? "remaining" : "actual"));
   const [error, setError] = useState<string | null>(null);
 
   async function call(
@@ -160,6 +177,8 @@ export function BudgetEditor({
         options={earningOptions}
         claimedBy={claimedBy}
         pending={pending}
+        column={column}
+        onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
@@ -174,6 +193,8 @@ export function BudgetEditor({
         options={spendingOptions}
         claimedBy={claimedBy}
         pending={pending}
+        column={column}
+        onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
@@ -188,6 +209,8 @@ export function BudgetEditor({
         options={spendingOptions}
         claimedBy={claimedBy}
         pending={pending}
+        column={column}
+        onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
@@ -255,13 +278,108 @@ function UnassignedWarning({
     <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
       <Link
         href={`/budgets/unassigned?year=${year}&month=${month + 1}`}
-        className="underline underline-offset-2"
+        className="rounded-md px-1 hover:bg-amber-100 dark:hover:bg-amber-900"
       >
         {unassigned.unassigned} transaction
         {unassigned.unassigned === 1 ? "" : "s"} (
         {formatCurrency(unassigned.unassignedTotal)}) aren&apos;t in a bucket yet
       </Link>
     </p>
+  );
+}
+
+/**
+ * A section heading, with its explanation on hover rather than underneath.
+ *
+ * The descriptions were always on screen and always the same, so they stopped being
+ * read — three permanent lines of static prose above a table, pushing the numbers
+ * down. As a tooltip they are there when wanted and out of the way otherwise.
+ *
+ * `title` alone would be a mouse-only affordance: it does not appear on keyboard
+ * focus, so the description would be unreachable without a pointer. `tabIndex` makes
+ * the heading focusable so it also surfaces on focus.
+ *
+ * The hover is a background, like every other row and control here. It was a dotted
+ * underline first, which was marking the same thing — but an underline under a
+ * heading reads as a rule dividing the header from the table, and it was the one
+ * underline left on the page after link underlines were removed.
+ *
+ * The `ⓘ` is decorative — the focusable element is the heading itself — so it is
+ * hidden from assistive tech rather than announced as an empty label.
+ */
+function SectionHeader({
+  title,
+  description,
+  adding,
+  onToggleAdding,
+}: {
+  title: string;
+  description: string;
+  adding: boolean;
+  onToggleAdding: () => void;
+}) {
+  return (
+    <header className="mb-2 flex items-start justify-between gap-3">
+      <h2
+        tabIndex={0}
+        title={description}
+        className="-mx-1.5 min-w-0 cursor-help rounded-md px-1.5 py-0.5 font-medium transition-colors hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:hover:bg-neutral-700 dark:focus-visible:ring-neutral-600"
+      >
+        {title}
+        <span aria-hidden className="ml-1 align-middle text-xs text-neutral-400">
+          ⓘ
+        </span>
+      </h2>
+      <button
+        type="button"
+        onClick={onToggleAdding}
+        className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 shrink-0"
+      >
+        {adding ? "Cancel" : "Add bucket"}
+      </button>
+    </header>
+  );
+}
+
+/**
+ * The right-hand column heading, which switches every table between Actual and
+ * Remaining.
+ *
+ * A button because it is one: the label is also the state, so "Actual" means "you
+ * are seeing Actual, click for Remaining". `title` spells out the consequence,
+ * which matters more here than usual — the toggle applies to all three tables, so
+ * clicking one heading changes two others, and that is not something the label
+ * alone communicates.
+ *
+ * The swap glyph is `aria-hidden` because the accessible name is the visible word:
+ * a screen reader announcing "Actual, button, swap" is worse than "Actual, button".
+ */
+function ColumnToggle({
+  column,
+  onToggle,
+}: {
+  column: Column;
+  onToggle: () => void;
+}) {
+  const showingActual = column === "actual";
+  return (
+    <span className="flex justify-end">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={
+          showingActual
+            ? "Show what is left in every table instead"
+            : "Show what was spent in every table instead"
+        }
+        className="-mr-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-200"
+      >
+        {showingActual ? "Actual" : "Remaining"}
+        <span aria-hidden className="text-[10px] leading-none">
+          {"\u21C4"}
+        </span>
+      </button>
+    </span>
   );
 }
 
@@ -275,6 +393,8 @@ function BudgetTable({
   pending,
   year,
   month,
+  column,
+  onToggleColumn,
   onSave,
   onDelete,
 }: {
@@ -287,6 +407,8 @@ function BudgetTable({
   pending: boolean;
   year: number;
   month: number;
+  column: Column;
+  onToggleColumn: () => void;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
@@ -304,25 +426,18 @@ function BudgetTable({
 
   return (
     <section>
-      <header className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="font-medium">{title}</h2>
-          <p className="text-xs text-neutral-500">{subtitle}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAdding((value) => !value)}
-          className="shrink-0 text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
-        >
-          {adding ? "Cancel" : "Add bucket"}
-        </button>
-      </header>
+      <SectionHeader
+        title={title}
+        description={subtitle}
+        adding={adding}
+        onToggleAdding={() => setAdding((value) => !value)}
+      />
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
         <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-800">
           <span>Name</span>
           <span className="text-right">Budgeted</span>
-          <span className="text-right">Actual</span>
+          <ColumnToggle column={column} onToggle={onToggleColumn} />
         </div>
 
         {rows.length === 0 ? (
@@ -338,6 +453,7 @@ function BudgetTable({
             year={year}
             month={month}
             disabled={pending}
+            column={column}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -372,6 +488,8 @@ function EarningsTable({
   pending,
   year,
   month,
+  column,
+  onToggleColumn,
   onSave,
   onDelete,
 }: {
@@ -381,6 +499,8 @@ function EarningsTable({
   pending: boolean;
   year: number;
   month: number;
+  column: Column;
+  onToggleColumn: () => void;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
@@ -395,27 +515,18 @@ function EarningsTable({
 
   return (
     <section>
-      <header className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="font-medium">Earnings</h2>
-          <p className="text-xs text-neutral-500">
-            Income received this month. Deposits are routed here automatically.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAdding((value) => !value)}
-          className="shrink-0 text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
-        >
-          {adding ? "Cancel" : "Add bucket"}
-        </button>
-      </header>
+      <SectionHeader
+        title="Earnings"
+        description="Income received this month. Deposits are routed here automatically."
+        adding={adding}
+        onToggleAdding={() => setAdding((value) => !value)}
+      />
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
         <div className="grid grid-cols-[1fr_6rem_5rem] gap-2 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:bg-neutral-800">
           <span>Name</span>
           <span className="text-right">Budgeted</span>
-          <span className="text-right">Actual</span>
+          <ColumnToggle column={column} onToggle={onToggleColumn} />
         </div>
 
         {rows.length === 0 ? (
@@ -432,6 +543,7 @@ function EarningsTable({
             year={year}
             month={month}
             disabled={pending}
+            column={column}
             onSave={onSave}
             onDelete={onDelete}
           />
@@ -596,7 +708,7 @@ function NewBucketForm({
                   type="button"
                   disabled={disabled}
                   onClick={() => setCategories([])}
-                  className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700"
                 >
                   Clear
                 </button>
@@ -609,7 +721,7 @@ function NewBucketForm({
           type="button"
           disabled={disabled || !canCreate}
           onClick={() => void submit()}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           Create
         </button>
@@ -670,7 +782,7 @@ function NewBucketForm({
                       ? "border-neutral-900 bg-neutral-900 text-white disabled:opacity-100 dark:border-white dark:bg-white dark:text-neutral-900"
                       : owner !== undefined
                         ? "border-neutral-200 text-neutral-400 line-through dark:border-neutral-800 dark:text-neutral-600"
-                        : "border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                        : "border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-700"
                   }`}
                 >
                   {humanizeCategory(value)}
@@ -696,6 +808,7 @@ function RowEditor({
   year,
   month,
   disabled,
+  column,
   onSave,
   onDelete,
 }: {
@@ -703,6 +816,7 @@ function RowEditor({
   year: number;
   month: number;
   disabled: boolean;
+  column: Column;
   onSave: (payload: {
     kind: BudgetRow["kind"];
     name: string;
@@ -736,8 +850,12 @@ function RowEditor({
    * Before this, a month where income beat its target rendered red - the same
    * red as overspending, on the one row where exceeding the number is the point.
    */
-  const over = row.budgeted > 0 && row.actual > row.budgeted;
-  const tone = !over ? "" : row.kind === "earning" ? "good" : "bad";
+  /*
+   * One figure, one judgement, whichever column is showing — see `columnTone` for
+   * why the two columns have to agree and why the comparison inverts between them.
+   */
+  const tone = columnTone(row, column);
+  const value = columnValue(row, column);
 
   const reset = () => {
     setSeen(row.budgeted);
@@ -745,13 +863,28 @@ function RowEditor({
   };
 
   return (
-    <div className="grid grid-cols-[1fr_6rem_5rem] items-center gap-2 border-b border-neutral-100 px-4 py-2 last:border-0 dark:border-neutral-800">
+    /*
+     * The whole row is the link.
+     *
+     * `relative` plus a stretched `::after` on the name link, rather than wrapping
+     * the row in an `<a>`: the row contains a real `<input>` and a delete `<button>`,
+     * and neither is valid inside an anchor.
+     *
+     * Those two controls are lifted above the stretched link with `relative z-10`.
+     * Without it they sit underneath it, so typing a budget amount or deleting a
+     * bucket would navigate to the bucket page instead - a genuinely nasty failure,
+     * because the budget field is the one thing on this page you use constantly.
+     *
+     * The row highlights on hover the way the nav items do, which is why the link no
+     * longer needs its own underline. An underline on the name was the only thing
+     * marking four of the five columns as clickable, and it was a poor signal for a
+     * target the size of the row.
+     */
+    <div className="group relative grid grid-cols-[1fr_6rem_5rem] items-center gap-2 border-b border-neutral-100 px-4 py-2 transition-colors last:border-0 hover:bg-neutral-100 dark:border-neutral-800 dark:hover:bg-neutral-700">
       <div className="min-w-0">
-        {/* Clicking the name opens the bucket so its transactions can be
-            reviewed and moved. */}
         <Link
           href={`/budgets/${row.id}?year=${year}&month=${month + 1}`}
-          className="block truncate text-sm underline-offset-2 hover:underline"
+          className="block truncate text-sm after:absolute after:inset-0 after:content-['']"
         >
           {row.name}
         </Link>
@@ -789,7 +922,7 @@ function RowEditor({
             event.currentTarget.blur();
           }
         }}
-        className="w-full bg-transparent text-right text-sm tabular-nums outline-none disabled:opacity-50"
+        className="relative z-10 w-full bg-transparent text-right text-sm tabular-nums outline-none disabled:opacity-50"
       />
 
       <div className="flex items-center justify-end gap-1">
@@ -802,14 +935,19 @@ function RowEditor({
                 : "text-neutral-500"
           }`}
         >
-          {formatCurrency(row.actual)}
+          {/*
+            Signed in Remaining mode on purpose. A negative is the information —
+            it says the bucket is over — and a leading "-" makes that legible without
+            needing the colour.
+          */}
+          {formatCurrency(value)}
         </span>
         <button
           type="button"
           onClick={() => onDelete(row.id)}
           disabled={disabled}
           aria-label={`Delete ${row.name}`}
-          className="text-neutral-400 hover:text-red-600 disabled:opacity-50"
+          className="relative z-10 rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-red-600 disabled:opacity-50 dark:hover:bg-neutral-700"
         >
           &times;
         </button>

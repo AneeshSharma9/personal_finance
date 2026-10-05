@@ -52,6 +52,7 @@ export function BucketCategories({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [search, setSearch] = useState("");
 
   async function save(next: string[]) {
     setError(null);
@@ -76,17 +77,46 @@ export function BucketCategories({
     (value) => !categories.includes(value) && claimedBy[value] === undefined,
   );
 
+  /*
+   * Searching widens the list rather than narrowing the addable one.
+   *
+   * Filtering only what can be added means searching for a category another bucket
+   * already has returns nothing at all — a dead end that reads as "no such category"
+   * when the category is right there in the user's own transactions. So a search
+   * shows every match, and the taken ones are listed but disabled, attributed to
+   * the bucket that has them. An empty result then means what it says.
+   *
+   * With no query the list stays addable-only, because "which categories are free"
+   * is the question being asked when nobody has searched for anything.
+   */
+  const query = search.trim().toLowerCase();
+  const matches = (value: string) =>
+    query.length === 0 ||
+    humanizeCategory(value).toLowerCase().includes(query) ||
+    value.toLowerCase().includes(query);
+
+  const shown = query
+    ? availableCategories.filter(
+        (value) => !categories.includes(value) && matches(value),
+      )
+    : addable;
+
+  const takenCount = shown.filter((value) => claimedBy[value] !== undefined).length;
+
   return (
     <details className="rounded-lg border border-neutral-200 dark:border-neutral-800">
-      <summary className="cursor-pointer list-none px-3 py-2 text-sm">
-        <span className="font-medium text-neutral-800 dark:text-neutral-200">
-          Match transactions by category
-        </span>{" "}
-        <span className="text-neutral-500">
-          {categories.length === 0
-            ? "— none, this bucket is display only"
-            : categories.map(humanizeCategory).join(", ")}
-        </span>
+      {/*
+        Title only. The summary used to append the current list — "— none, this
+        bucket is display only", or "Groceries, Restaurants" — which restated what
+        the panel underneath already shows the moment you open it, and made the
+        collapsed row twice as tall as it needed to be. Worse, the "display only"
+        wording was doing a job it could not do honestly: a bucket can receive
+        transactions through merchant or amount rules and through explicitly tagged
+        loan payments while claiming no category at all, so "display only" read as
+        "nothing will ever land here" and was wrong for most buckets.
+      */}
+      <summary className="cursor-pointer list-none rounded-t-lg px-3 py-2 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800">
+        Match transactions by category
       </summary>
 
       <div className="space-y-2 border-t border-neutral-100 px-3 py-3 dark:border-neutral-800">
@@ -136,27 +166,67 @@ export function BucketCategories({
         ) : null}
 
         {picking ? (
-          addable.length === 0 ? (
-            <p className="text-xs text-neutral-500">
-              Every category is either already on this bucket or claimed by another
-              one.
-            </p>
-          ) : (
-            <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
-              {addable.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  disabled={pending}
-                  onClick={() => void save([...categories, value])}
-                  title={`Also match ${humanizeCategory(value)}`}
-                  className="rounded-full border border-neutral-300 px-2.5 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-                >
-                  {humanizeCategory(value)}
-                </button>
-              ))}
-            </div>
-          )
+          <>
+            {/*
+              There are a few dozen categories in real data — every distinct Plaid
+              category the user has actually transacted in — so the list needs
+              filtering before it is usable. Matches both the display name and the
+              raw value, because people search for either.
+            */}
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={`Search categories (${addable.length} available)`}
+              aria-label="Search categories"
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+            />
+
+            {shown.length === 0 ? (
+              <p className="text-xs text-neutral-500">
+                {query.length > 0
+                  ? `Nothing matches "${search.trim()}".`
+                  : "Every category is either already on this bucket or claimed by another one."}
+              </p>
+            ) : (
+              <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
+                {shown.map((value) => {
+                  const owner = claimedBy[value];
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={pending || owner !== undefined}
+                      onClick={() => void save([...categories, value])}
+                      title={
+                        owner !== undefined
+                          ? `Already matched by "${owner}"`
+                          : `Also match ${humanizeCategory(value)}`
+                      }
+                      className={`rounded-full border px-2.5 py-1 text-xs disabled:cursor-not-allowed ${
+                        owner !== undefined
+                          ? "border-neutral-200 text-neutral-400 line-through dark:border-neutral-800 dark:text-neutral-600"
+                          : "border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                      }`}
+                    >
+                      {humanizeCategory(value)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/*
+              Said only when a search surfaced something unavailable. Otherwise the
+              struck-through chip and its tooltip are doing the job quietly enough.
+            */}
+            {takenCount > 0 ? (
+              <p className="text-xs text-neutral-500">
+                {takenCount} of those {takenCount === 1 ? "is" : "are"} already
+                matched by another bucket.
+              </p>
+            ) : null}
+          </>
         ) : (
           <button
             type="button"
@@ -168,26 +238,32 @@ export function BucketCategories({
           </button>
         )}
 
-        {picking && addable.length > 0 ? (
+        {picking ? (
           <button
             type="button"
-            onClick={() => setPicking(false)}
-            className="text-xs text-neutral-500 underline underline-offset-2"
+            onClick={() => {
+              setPicking(false);
+              setSearch("");
+            }}
+            className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800 shrink-0"
           >
             Done
           </button>
         ) : null}
 
         {/*
-          Named so a bucket with no categories says why its Actual is $0 rather
-          than leaving it looking broken. It is the single most confusing thing
-          about a display-only bucket.
+          Says what "no categories" actually means, because the obvious reading is
+          wrong. A bucket with no category is not inert: merchant rules, amount
+          rules and explicitly tagged loan payments all still route transactions
+          into it. "Display only" claimed the opposite, and several buckets here are
+          funded entirely by tagged loan payments while claiming nothing.
         */}
         {categories.length === 0 ? (
           <p className="text-xs text-neutral-500">
-            With no category this bucket measures nothing on its own — its Actual
-            stays 0 until you route a transaction into it by hand, or give it a
-            category above.
+            No categories, so nothing is routed here <em>by category</em>.
+            Transactions can still arrive from rules, from loan payments tagged to
+            this bucket, or by moving them here by hand. Its Actual will read 0 until
+            one does.
           </p>
         ) : null}
       </div>

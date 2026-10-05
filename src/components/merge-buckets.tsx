@@ -106,7 +106,7 @@ export function MergeBuckets({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="text-xs font-medium text-neutral-600 underline dark:text-neutral-400"
+          className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800 shrink-0"
         >
           {open ? "Cancel" : "Merge buckets"}
         </button>
@@ -210,7 +210,7 @@ export function MergeBuckets({
                 picked.length < 1 ||
                 (mode === "new" ? name.trim().length === 0 : targetId === "")
               }
-              className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
             >
               {pending ? "Merging..." : `Merge ${picked.length || ""}`}
             </button>

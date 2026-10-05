@@ -361,7 +361,7 @@ export function RulesEditor({
             <button
               type="button"
               onClick={addStep}
-              className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+              className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
             >
               Add step
             </button>
@@ -520,7 +520,7 @@ export function RulesEditor({
           <button
             type="submit"
             disabled={!canSave || pending}
-            className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-white dark:text-neutral-900"
+            className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
           >
             {editingId === null ? "Save rule" : "Update rule"}
           </button>
@@ -528,7 +528,7 @@ export function RulesEditor({
             <button
               type="button"
               onClick={resetForm}
-              className="text-xs text-neutral-500 underline hover:text-neutral-800 dark:hover:text-neutral-200"
+              className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
             >
               Cancel edit
             </button>
@@ -641,7 +641,7 @@ export function RulesEditor({
                   type="button"
                   disabled={pending}
                   onClick={() => void remove(rule.id)}
-                  className="text-xs text-red-600 underline disabled:opacity-50 dark:text-red-400"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950"
                 >
                   Delete
                 </button>

@@ -3,9 +3,8 @@ import { test } from "node:test";
 
 process.loadEnvFile(".env.local");
 
-const { bucketCategoryRules, isBalanceMovement, resolveBucket } = await import(
-  "@/lib/budget-engine",
-);
+const { bucketCategoryRules, isBalanceMovement, matchesExclusion, resolveBucket } =
+  await import("@/lib/budget-engine");
 type RuleSet = import("@/lib/budget-engine").RuleSet;
 
 /** Bucket ids used across these tests. */
@@ -20,6 +19,7 @@ function rules(overrides: Partial<RuleSet> = {}): RuleSet {
     catchAllBudgetId: B.catchAll,
     earningBudgetIds: [],
     loanRules: [],
+    exclusionRules: [],
     ...overrides,
   };
 }
@@ -449,4 +449,144 @@ test("earnings buckets never claim spending categories", () => {
   ]);
   assert.deepEqual(bucketCategories, []);
   assert.equal(catchAllBudgetId, null);
+});
+
+/*
+ * Ignore rules on the sync path.
+ *
+ * These are the rules that were silently invisible here. `loadRuleSet` builds
+ * `bucketRules` with `rule.budgetId !== null`, which is right for routing — an
+ * ignore step has no bucket to route into — and wrong for exclusion. So this engine,
+ * the one that runs after every Plaid sync and webhook, never saw them: an ignore
+ * rule only worked on transactions that already existed when the rule was saved,
+ * and anything arriving afterwards was routed past it into the catch-all.
+ */
+const ignore = (value: string) => [
+  { matchType: "merchant" as const, value, numericValue: 0 },
+];
+
+test("an ignore rule claims a matching transaction", () => {
+  const r = rules({ exclusionRules: ignore("crcardpmt") });
+  assert.equal(
+    matchesExclusion(
+      txn({ name: "ACH HOLD CAPITAL ONE DES:CRCARDPMT ID:CA07", amount: 807.55 }),
+      r,
+    ),
+    true,
+  );
+});
+
+test("merchant matching is a substring and case-insensitive, like routing", () => {
+  const r = rules({ exclusionRules: ignore("capital one des:crcardpmt") });
+  assert.equal(
+    matchesExclusion(txn({ name: "CAPITAL ONE DES:CRCARDPMT ON 10/02" }), r),
+    true,
+    "the rule is lower-cased and the haystack is too",
+  );
+  assert.equal(matchesExclusion(txn({ name: "SOMETHING ELSE" }), r), false);
+});
+
+test("an ignore rule does not claim an unrelated transaction", () => {
+  const r = rules({ exclusionRules: ignore("crcardpmt") });
+  assert.equal(matchesExclusion(txn({ name: "EAGLE VILLA" }), r), false);
+});
+
+test("no ignore rules means nothing is excluded", () => {
+  assert.equal(matchesExclusion(txn({ name: "ANYTHING" }), rules()), false);
+});
+
+test("category ignore rules match the way category routing does", () => {
+  const r = rules({
+    exclusionRules: [
+      { matchType: "category", value: "LOAN_PAYMENTS", numericValue: 0 },
+    ],
+  });
+  assert.equal(
+    matchesExclusion(txn({ plaidCategoryPrimary: "LOAN_PAYMENTS" }), r),
+    true,
+  );
+  // Boundary-aware, so a partial category does not match.
+  assert.equal(matchesExclusion(txn({ plaidCategoryPrimary: "GENERAL" }), r), false);
+});
+
+test("an amount ignore rule matches a magnitude, not a sign", () => {
+  const r = rules({
+    exclusionRules: [{ matchType: "amount", value: "600", numericValue: 600 }],
+  });
+  assert.equal(matchesExclusion(txn({ amount: 600 }), r), true);
+  assert.equal(matchesExclusion(txn({ amount: -600 }), r), true);
+  assert.equal(matchesExclusion(txn({ amount: 599 }), r), false);
+});
+
+test("an unparseable amount rule cannot match anything", () => {
+  /*
+   * The stand-in for an unparseable value has to be unreachable rather than merely
+   * unlikely, and the obvious choice of 0 is not: `Math.abs(0 - 0) < 0.005` is true,
+   * so it would match every zero-value transaction. `Number("")` is also 0, which is
+   * how an empty match value gets in. NaN is the only value that cannot equal
+   * anything under subtraction.
+   */
+  for (const bad of ["NOT_A_NUMBER", ""]) {
+    const r = rules({
+      exclusionRules: [
+        { matchType: "amount", value: bad, numericValue: Number.NaN },
+      ],
+    });
+    for (const amount of [0, 0.01, -600, 807.55]) {
+      assert.equal(
+        matchesExclusion(txn({ amount }), r),
+        false,
+        `"${bad}" must not match ${amount}`,
+      );
+    }
+  }
+});
+
+
+test("a user's category override is what an ignore rule sees", () => {
+  const r = rules({
+    exclusionRules: [{ matchType: "category", value: "INCOME", numericValue: 0 }],
+  });
+  assert.equal(
+    matchesExclusion(
+      txn({ categoryOverride: "INCOME", plaidCategoryPrimary: "TRANSFER_IN" }),
+      r,
+    ),
+    true,
+  );
+});
+
+/**
+ * The case that decided the shape of the fix.
+ *
+ * Two of the user's rules match "uas": one ignoring it, one filing it into
+ * Savings/Debt. The row needs to end up **both** — excluded so it counts as neither
+ * income nor spending, bucketed so it stays visible where it was put rather than
+ * disappearing. An early `continue` on the ignore would have quietly broken the
+ * second rule for every future transaction.
+ */
+test("a transaction can be ignored and bucketed at the same time", () => {
+  const r = rules({
+    exclusionRules: ignore("uas"),
+    merchantRules: [{ budgetId: 69, value: "uas" }],
+    catchAllBudgetId: null,
+  });
+  const row = txn({ name: "UAS PAYMENT", amount: 1000 });
+
+  assert.equal(matchesExclusion(row, r), true, "the ignore rule claims it");
+  assert.equal(
+    resolveBucket(row, r),
+    69,
+    "and the bucket rule still files it, which is why the loop must not `continue`",
+  );
+});
+
+test("an ignore rule that matches leaves the catch-all free to catch everything else", () => {
+  const r = rules({ exclusionRules: ignore("crcardpmt") });
+  // This is the actual bug: the ignored card payment was landing in Everything Else.
+  assert.equal(
+    resolveBucket(txn({ name: "CAPITAL ONE DES:CRCARDPMT" }), r),
+    B.catchAll,
+    "routing is unchanged - exclusion is a separate question, asked separately",
+  );
 });
