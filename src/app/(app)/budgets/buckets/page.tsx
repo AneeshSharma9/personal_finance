@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
 import { getBudgets, getCategoryOptions, getLatestTransactionMonth } from "@/lib/queries";
@@ -56,24 +55,11 @@ export default async function BucketsPage({
     });
   }
 
-  const total = groups.basic.length + groups.category.length + groups.earning.length;
-
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <header>
         <BackLink href={`/budgets?year=${year}&month=${month + 1}`}>Budgets</BackLink>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Buckets</h1>
-        <p className="text-sm text-neutral-500">
-          {total} {total === 1 ? "bucket" : "buckets"}. Add and delete them here, and
-          choose which categories each one matches.
-        </p>
-        <p className="mt-1 text-xs text-neutral-500">
-          Budgeted amounts are set on the{" "}
-          <Link href={`/budgets?year=${year}&month=${month + 1}`} className="hover:underline">
-            budgets page
-          </Link>
-          , not here — one place per figure.
-        </p>
       </header>
 
       <BucketManager

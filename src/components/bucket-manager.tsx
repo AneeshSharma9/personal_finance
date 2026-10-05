@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { BucketCategories } from "@/components/bucket-categories";
+import { SectionHeader } from "@/components/section-header";
 import { formatCurrency } from "@/lib/format";
 
 import { NewBucketForm } from "./new-bucket-form";
@@ -145,26 +146,24 @@ export function BucketManager({
 
       {GROUPS.map((group) => (
         <section key={group.key}>
-          <header className="mb-2 flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="font-medium text-neutral-800 dark:text-neutral-200">
-                {group.title}
-              </h2>
-              <p className="text-xs text-neutral-500">{group.description}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                setAdding((current) => ({
-                  ...current,
-                  [group.key]: !current[group.key],
-                }))
-              }
-              className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-            >
-              {adding[group.key] ? "Cancel" : "Add bucket"}
-            </button>
-          </header>
+          <SectionHeader
+            title={group.title}
+            description={group.description}
+            slot={
+              <button
+                type="button"
+                onClick={() =>
+                  setAdding((current) => ({
+                    ...current,
+                    [group.key]: !current[group.key],
+                  }))
+                }
+                className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              >
+                {adding[group.key] ? "Cancel" : "Add bucket"}
+              </button>
+            }
+          />
 
           {groups[group.key].length === 0 && !adding[group.key] ? (
             <p className="rounded-lg border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">

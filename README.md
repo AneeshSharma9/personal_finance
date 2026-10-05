@@ -754,9 +754,10 @@ hover as every other row and control.
 
 ### Section descriptions are tooltips, not prose
 
-The budgets page's three section headers — Earnings, Budget Basics, Budget
-Categories — carry their explanations as a `title` on the heading rather than as a
-line of text underneath it.
+`SectionHeader` (`src/components/section-header.tsx`) is shared: the budgets tables and
+the buckets page both use it, so they cannot drift into looking like different
+products. It carries the explanation as a `title` on the heading rather than a line of
+text underneath.
 
 They were always on screen and always the same, so they had stopped being read: three
 permanent lines of static prose above the tables, pushing the numbers down. On hover
@@ -768,10 +769,14 @@ description would be unreachable without a pointer. The heading is therefore
 mark it as holding more than its own words. The `ⓘ` is `aria-hidden`, because the
 focusable element is the heading itself and an announced glyph would just be noise.
 
-All three headers share one `SectionHeader` component, so the earnings description
-("Income received this month. Deposits are routed here automatically.") is defined in
-the same place as the two budget ones rather than hand-written into a second header
-markup that could drift.
+The buckets page uses it too, which is why its Earnings / Budget Basics / Budget
+Categories headings behave identically — a `slot` prop carries the "Add bucket" button
+opposite the heading, so the header component does not need to know what buttons are.
+
+The buckets page has no prose above its own `<h1>` at all. It had a bucket count, a
+one-line description of the page, and a note explaining that budgeted amounts are
+edited elsewhere — three lines of static text above a page whose sections say the
+same things on hover.
 
 ### Opening a bucket from the cash flow
 

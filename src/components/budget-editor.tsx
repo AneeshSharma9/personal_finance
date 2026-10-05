@@ -10,6 +10,7 @@ import {
   parseCurrencyInput,
 } from "@/lib/format";
 import { columnTone, columnValue, type Column } from "@/lib/budget-columns";
+import { SectionHeader } from "@/components/section-header";
 import { selectAllProps } from "@/lib/select-all";
 
 export type BudgetRow = {
@@ -244,61 +245,6 @@ function UnassignedWarning({
   );
 }
 
-/**
- * A section heading, with its explanation on hover rather than underneath.
- *
- * The descriptions were always on screen and always the same, so they stopped being
- * read — three permanent lines of static prose above a table, pushing the numbers
- * down. As a tooltip they are there when wanted and out of the way otherwise.
- *
- * `title` alone would be a mouse-only affordance: it does not appear on keyboard
- * focus, so the description would be unreachable without a pointer. `tabIndex` makes
- * the heading focusable so it also surfaces on focus.
- *
- * The hover is a background, like every other row and control here. It was a dotted
- * underline first, which was marking the same thing — but an underline under a
- * heading reads as a rule dividing the header from the table, and it was the one
- * underline left on the page after link underlines were removed.
- *
- * The `ⓘ` is decorative — the focusable element is the heading itself — so it is
- * hidden from assistive tech rather than announced as an empty label.
- */
-function SectionHeader({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <header className="mb-2 flex items-start justify-between gap-3">
-      <h2
-        tabIndex={0}
-        title={description}
-        className="-mx-1.5 min-w-0 cursor-help rounded-md px-1.5 py-0.5 font-medium transition-colors hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:hover:bg-neutral-700 dark:focus-visible:ring-neutral-600"
-      >
-        {title}
-        <span aria-hidden className="ml-1 align-middle text-xs text-neutral-400">
-          ⓘ
-        </span>
-      </h2>
-    </header>
-  );
-}
-
-/**
- * The right-hand column heading, which switches every table between Actual and
- * Remaining.
- *
- * A button because it is one: the label is also the state, so "Actual" means "you
- * are seeing Actual, click for Remaining". `title` spells out the consequence,
- * which matters more here than usual — the toggle applies to all three tables, so
- * clicking one heading changes two others, and that is not something the label
- * alone communicates.
- *
- * The swap glyph is `aria-hidden` because the accessible name is the visible word:
- * a screen reader announcing "Actual, button, swap" is worse than "Actual, button".
- */
 function ColumnToggle({
   column,
   onToggle,
