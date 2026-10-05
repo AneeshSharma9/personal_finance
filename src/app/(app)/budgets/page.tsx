@@ -9,7 +9,6 @@ import {
   getLatestTransactionMonth,
   getMonthlySeries,
   getYearRange,
-  getCategoryOptions,
   getSpendSummary,
 } from "@/lib/queries";
 import { BudgetEditor } from "@/components/budget-editor";
@@ -67,16 +66,8 @@ export default async function BudgetsPage({
    */
   const stripMonths = buildYear(year);
 
-  const [
-    groups,
-    availableCategories,
-    unassigned,
-    summary,
-    series,
-    yearRange,
-  ] = await Promise.all([
+  const [groups, unassigned, summary, series, yearRange] = await Promise.all([
     getBudgetsWithActuals(user.id, from, to),
-    getCategoryOptions(user.id),
     getSpendSummary(user.id, from, to),
     getBudgetSummary(user.id, from, to),
     getMonthlySeries(user.id, stripMonths),
@@ -113,17 +104,28 @@ export default async function BudgetsPage({
           Each answers a different question from the grid below, so each has its own
           page. The worksheet is the plan; the cash flow is what happened - which is
           why only that one carries the selected month across.
+
+          Buckets leads, and carries the month, because it is where this page's
+          controls went. Adding a bucket, deleting one and choosing which categories
+          each matches used to be scattered across here and the bucket's own page;
+          what is left here is the comparison, so these are the ways off it.
         */}
         <div className="flex flex-wrap gap-2">
           <Link
+            href={`/budgets/buckets?year=${year}&month=${month + 1}`}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-800 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-100 dark:hover:bg-neutral-800"
+          >
+            Buckets
+          </Link>
+          <Link
             href="/budgets/worksheet"
-            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             Budget worksheet
           </Link>
           <Link
             href={`/budgets/cash-flow?scope=month&year=${year}&month=${month + 1}`}
-            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             Cash flow
           </Link>
@@ -150,7 +152,6 @@ export default async function BudgetsPage({
         basics={basics}
         categories={spending}
         earnings={earnings}
-        availableCategories={availableCategories}
         unassigned={unassigned}
         year={year}
         month={month}

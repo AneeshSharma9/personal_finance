@@ -323,10 +323,39 @@ A row stores two deliberately separate things:
   Empty means display-only. Migration `0014` backfilled it from the old single
   value, so no bucket lost the category it was already measuring against.
 
-### Where a bucket's categories are edited
+### Where a bucket is configured: `/budgets/buckets`
 
-On the bucket's **own page**, in a **Match transactions by category** disclosure —
-not on its row in the budgets table. The summary line is the title and nothing
+Adding a bucket, deleting one, and choosing which categories it matches all live on
+their own page, reached by **Buckets** in the budgets page header.
+
+They were in three places: an "Add bucket" control on each section of the budgets
+page, a delete `×` on every row there, and the category matcher on the bucket's own
+transactions page. So configuring a bucket meant moving between three screens, and
+none of them was the screen where buckets live. The budgets page was carrying four
+controls per row that all navigated somewhere else.
+
+The split is by question, not by convenience:
+
+- **`/budgets`** — what you budgeted against what you spent. The budgeted amount is
+  edited here and shown read-only on the buckets page; one editor per figure, or they
+  drift apart.
+- **`/budgets/buckets`** — what a bucket *is*. Name, categories, add, delete.
+- **`/budgets/[id]`** — what is *in* it. The transaction list, and reassignment.
+
+The bucket detail page carries no editor and says so, pointing at the buckets page.
+It used to hold the matcher as a disclosure, which arrived with a strip of chips and a
+picker that crowded out the transactions underneath it — a page about a list of
+transactions had a configuration form in it.
+
+`isActive` in the nav already treats `/budgets/*` as Budgets, so the new page lights up
+the same nav item without a change.
+
+### How a bucket's categories are edited
+
+In a **Match transactions by category** disclosure per bucket, on the buckets page.
+The disclosure gained a `flush` variant there: as a standalone card its border says
+"this is a thing you open", nested inside a row that already has one it read as a box
+inside a box. The summary line is the title and nothing
 else; it used to append the current list, which restated what the panel underneath
 shows the moment you open it and made the collapsed row twice as tall as needed.
 

@@ -5,13 +5,10 @@ import { requireUser } from "@/lib/auth";
 import { formatCurrency, monthRange, parseDateRange } from "@/lib/format";
 import {
   getBudgetForUser,
-  getBudgets,
-  getCategoryOptions,
   getLatestTransactionMonth,
   getTransactionsInBucket,
 } from "@/lib/queries";
 import { BackLink } from "@/components/back-link";
-import { BucketCategories } from "@/components/bucket-categories";
 import { BucketTransactions } from "@/components/bucket-transactions";
 
 export const metadata: Metadata = { title: "Bucket · Finance" };
@@ -71,34 +68,17 @@ export default async function BucketPage({
   const { from, to } = range ?? monthRange(year, month);
   const months = range?.months ?? 1;
 
-  const [transactions, availableCategories, allBuckets] = await Promise.all([
-    getTransactionsInBucket(user.id, budget.id, from, to),
-    getCategoryOptions(user.id),
-    getBudgets(user.id),
-  ]);
-
   /*
-   * Which bucket already claims each category, so the picker can grey out the
-   * taken ones and say who has them.
-   *
-   * This bucket's own categories are excluded, or it would be competing with
-   * itself and every category it already matched would look unavailable. The
-   * catch-all is skipped: it is the bucket for spending nothing else claimed, so
-   * it must not claim a category or it would take a real bucket's transactions.
-   *
-   * First bucket wins, matching the engine's first-match-wins order.
+   * Just the transactions. This used to also fetch every bucket and every category
+   * in the account, to build the ownership map the category picker needed — all of
+   * which moved to /budgets/buckets along with the picker itself.
    */
-  const claimedBy: Record<string, string> = {};
-  for (const row of allBuckets) {
-    const isCatchAll =
-      row.budgetKind !== "earning" &&
-      row.categories.length === 0 &&
-      /everything\s*else|^other$/i.test(row.name);
-    if (row.id === budget.id || isCatchAll) continue;
-    for (const value of row.categories) {
-      if (claimedBy[value] === undefined) claimedBy[value] = row.name;
-    }
-  }
+  const transactions = await getTransactionsInBucket(
+    user.id,
+    budget.id,
+    from,
+    to,
+  );
 
   /**
    * Total for the header, using the same sign rules as getActualsByBucket so
@@ -182,19 +162,21 @@ export default async function BucketPage({
       )}
 
       {/*
-        Moved here from the budgets table. On the row this was a strip of chips and
-        a "+ category" button, and a bucket with three categories wrapped one line of
-        a grid into five — the table is for comparing figures, and which categories a
-        bucket claims is not comparable at a glance.
+        The category matcher moved to /budgets/buckets. This page answers "what is in
+        this bucket", which is a list of transactions; that one answers "what is this
+        bucket", which is a configuration. They were the same page, so neither question
+        had room to be answered properly, and the matcher arrived here with a strip of
+        chips and a picker that crowded out the transactions underneath it.
       */}
-      <BucketCategories
-        name={budget.name}
-        kind={budget.budgetKind}
-        categories={budget.categories}
-        budgeted={Number(budget.monthlyLimit)}
-        availableCategories={availableCategories}
-        claimedBy={claimedBy}
-      />
+      <p className="text-xs text-neutral-500">
+        <Link
+          href={`/budgets/buckets?year=${year}&month=${month + 1}`}
+          className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        >
+          Edit this bucket&rsquo;s settings
+        </Link>{" "}
+        &mdash; the categories it matches, its name, or deleting it.
+      </p>
 
       <BucketTransactions
         transactions={transactions}

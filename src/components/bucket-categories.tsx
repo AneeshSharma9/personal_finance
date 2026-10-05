@@ -33,6 +33,7 @@ export function BucketCategories({
   budgeted,
   availableCategories,
   claimedBy,
+  flush = false,
 }: {
   name: string;
   kind: "basic" | "category" | "earning";
@@ -47,6 +48,12 @@ export function BucketCategories({
    * who owns what — and so the answer cannot disagree with the editor's own list.
    */
   claimedBy: Record<string, string>;
+  /**
+   * Drop the component's own border and corners, for use inside a row that already
+   * has them. As a standalone card the border says "this is a thing you open"; nested,
+   * it read as a box inside a box.
+   */
+  flush?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -104,7 +111,13 @@ export function BucketCategories({
   const takenCount = shown.filter((value) => claimedBy[value] !== undefined).length;
 
   return (
-    <details className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+    <details
+      className={
+        flush
+          ? "mt-2"
+          : "rounded-lg border border-neutral-200 dark:border-neutral-800"
+      }
+    >
       {/*
         Title only. The summary used to append the current list — "— none, this
         bucket is display only", or "Groceries, Restaurants" — which restated what
@@ -115,11 +128,21 @@ export function BucketCategories({
         loan payments while claiming no category at all, so "display only" read as
         "nothing will ever land here" and was wrong for most buckets.
       */}
-      <summary className="cursor-pointer list-none rounded-t-lg px-3 py-2 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800">
+      <summary
+        className={`cursor-pointer list-none text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800 ${
+          flush ? "rounded-md px-2 py-1" : "rounded-t-lg px-3 py-2"
+        }`}
+      >
         Match transactions by category
       </summary>
 
-      <div className="space-y-2 border-t border-neutral-100 px-3 py-3 dark:border-neutral-800">
+      <div
+        className={`space-y-2 ${
+          flush
+            ? "mt-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800"
+            : "border-t border-neutral-100 px-3 py-3 dark:border-neutral-800"
+        }`}
+      >
         <p className="text-xs text-neutral-500">
           {/*
             Stated here because it is the part that is easy to get wrong: a

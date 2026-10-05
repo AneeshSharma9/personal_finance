@@ -7,7 +7,6 @@ import { useState, useTransition } from "react";
 import {
   formatCurrency,
   formatCurrencyInput,
-  humanizeCategory,
   parseCurrencyInput,
 } from "@/lib/format";
 import { columnTone, columnValue, type Column } from "@/lib/budget-columns";
@@ -44,7 +43,6 @@ type Props = {
   basics: BudgetRow[];
   categories: BudgetRow[];
   earnings: BudgetRow[];
-  availableCategories: string[];
   unassigned: SpendSummary;
   totals: BudgetTotals;
   /** Month currently displayed; carried into bucket links. */
@@ -56,7 +54,6 @@ export function BudgetEditor({
   basics,
   categories,
   earnings,
-  availableCategories,
   unassigned,
   totals,
   year,
@@ -116,38 +113,6 @@ export function BudgetEditor({
       body: JSON.stringify(payload),
     });
 
-  const deleteBudget = (id: number) =>
-    call(`/api/budgets?id=${id}`, { method: "DELETE" });
-
-  /**
-   * Which bucket already claims each category, so the picker can show the options
-   * that are still free and mark the ones that are taken.
-   *
-   * A map rather than a set, because the editor no longer hides a claimed
-   * category - it greys it out and says who has it. Hiding it meant a category
-   * that had gone somewhere else simply stopped being offerable, so the only
-   * visible symptom was that "Groceries" could never match anything again and
-   * nothing said why.
-   *
-   * The catch-all is not listed: it is the bucket for spending nothing else
-   * claimed, so it must not itself claim a category or it would compete with a
-   * real bucket and take its transactions.
-   */
-  const claimedBy = new Map<string, string>();
-  for (const row of [...basics, ...categories, ...earnings]) {
-    if (row.isCatchAll) continue;
-    for (const value of row.categories) {
-      // First bucket wins, matching resolveBucket's first-match-wins order.
-      if (!claimedBy.has(value)) claimedBy.set(value, row.name);
-    }
-  }
-
-  const options = availableCategories;
-
-  const spendingOptions = options.filter(
-    (category) => !isIncomeCategory(category),
-  );
-  const earningOptions = options.filter(isIncomeCategory);
 
   const spendingActual = totals.basicsActual + totals.categoriesActual;
   const overSpending = spendingActual > totals.spendingBudget;
@@ -174,15 +139,12 @@ export function BudgetEditor({
       */}
       <EarningsTable
         rows={earnings}
-        options={earningOptions}
-        claimedBy={claimedBy}
         pending={pending}
         column={column}
         onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
-        onDelete={deleteBudget}
       />
 
       <BudgetTable
@@ -190,15 +152,12 @@ export function BudgetEditor({
         subtitle="Automatic bills, utilities, savings goals and debt payments."
         rows={basics}
         kind="basic"
-        options={spendingOptions}
-        claimedBy={claimedBy}
         pending={pending}
         column={column}
         onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
-        onDelete={deleteBudget}
       />
 
       <BudgetTable
@@ -206,15 +165,12 @@ export function BudgetEditor({
         subtitle="Flexible spending, grouped into buckets."
         rows={categories}
         kind="category"
-        options={spendingOptions}
-        claimedBy={claimedBy}
         pending={pending}
         column={column}
         onToggleColumn={toggleColumn}
         year={year}
         month={month}
         onSave={saveBudget}
-        onDelete={deleteBudget}
       />
 
       {/*
@@ -310,13 +266,9 @@ function UnassignedWarning({
 function SectionHeader({
   title,
   description,
-  adding,
-  onToggleAdding,
 }: {
   title: string;
   description: string;
-  adding: boolean;
-  onToggleAdding: () => void;
 }) {
   return (
     <header className="mb-2 flex items-start justify-between gap-3">
@@ -330,13 +282,6 @@ function SectionHeader({
           ⓘ
         </span>
       </h2>
-      <button
-        type="button"
-        onClick={onToggleAdding}
-        className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700 shrink-0"
-      >
-        {adding ? "Cancel" : "Add bucket"}
-      </button>
     </header>
   );
 }
@@ -388,22 +333,17 @@ function BudgetTable({
   subtitle,
   rows,
   kind,
-  options,
-  claimedBy,
   pending,
   year,
   month,
   column,
   onToggleColumn,
   onSave,
-  onDelete,
 }: {
   title: string;
   subtitle: string;
   rows: BudgetRow[];
   kind: "basic" | "category";
-  options: string[];
-  claimedBy: Map<string, string>;
   pending: boolean;
   year: number;
   month: number;
@@ -415,22 +355,12 @@ function BudgetTable({
     categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
-  onDelete: (id: number) => Promise<Response | null>;
 }) {
-  /*
-   * The picker used to render only while the section was empty, so adding one
-   * bucket removed the only way to add a second. It now sits behind a control in
-   * the section header and stays open until dismissed.
-   */
-  const [adding, setAdding] = useState(false);
-
   return (
     <section>
       <SectionHeader
         title={title}
         description={subtitle}
-        adding={adding}
-        onToggleAdding={() => setAdding((value) => !value)}
       />
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -442,7 +372,13 @@ function BudgetTable({
 
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-neutral-500">
-            Nothing here yet. Add a bucket below.
+            Nothing here yet.{" "}
+            <Link
+              href={`/budgets/buckets?year=${year}&month=${month + 1}`}
+              className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+            >
+              Add a bucket
+            </Link>
           </p>
         ) : null}
 
@@ -455,27 +391,9 @@ function BudgetTable({
             disabled={pending}
             column={column}
             onSave={onSave}
-            onDelete={onDelete}
           />
         ))}
 
-        {/*
-          Shown when the section is empty, so the first bucket is discoverable
-          without hunting for a button, and whenever the header toggle is open.
-        */}
-        {rows.length === 0 || adding ? (
-          <NewBucketForm
-            kind={kind}
-            options={options}
-            claimedBy={claimedBy}
-            disabled={pending}
-            emptyLabel={rows.length === 0 ? "Pick a category" : "Filter categories"}
-            onCreate={(payload) => {
-              setAdding(false);
-              return onSave(payload);
-            }}
-          />
-        ) : null}
       </div>
     </section>
   );
@@ -483,19 +401,14 @@ function BudgetTable({
 
 function EarningsTable({
   rows,
-  options,
-  claimedBy,
   pending,
   year,
   month,
   column,
   onToggleColumn,
   onSave,
-  onDelete,
 }: {
   rows: BudgetRow[];
-  options: string[];
-  claimedBy: Map<string, string>;
   pending: boolean;
   year: number;
   month: number;
@@ -507,19 +420,14 @@ function EarningsTable({
     categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
-  onDelete: (id: number) => Promise<Response | null>;
 }) {
   // Same treatment as the budget sections: the picker is behind a control
   // instead of permanently occupying the bottom of the table.
-  const [adding, setAdding] = useState(false);
-
   return (
     <section>
       <SectionHeader
         title="Earnings"
         description="Income received this month. Deposits are routed here automatically."
-        adding={adding}
-        onToggleAdding={() => setAdding((value) => !value)}
       />
 
       <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -532,7 +440,13 @@ function EarningsTable({
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-neutral-500">
             No earnings buckets yet. Deposits will not be routed anywhere until
-            one exists.
+            one exists.{" "}
+            <Link
+              href={`/budgets/buckets?year=${year}&month=${month + 1}`}
+              className="rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+            >
+              Add one
+            </Link>
           </p>
         ) : null}
 
@@ -545,23 +459,8 @@ function EarningsTable({
             disabled={pending}
             column={column}
             onSave={onSave}
-            onDelete={onDelete}
           />
         ))}
-
-        {adding ? (
-          <NewBucketForm
-            kind="earning"
-            options={options}
-            claimedBy={claimedBy}
-            disabled={pending}
-            emptyLabel="Pick an income category"
-            onCreate={(payload) => {
-              setAdding(false);
-              return onSave(payload);
-            }}
-          />
-        ) : null}
       </div>
     </section>
   );
@@ -579,230 +478,6 @@ function EarningsTable({
  * Picking a real category used to be the *only* way to add a row, which made a
  * bucket that is not a Plaid category impossible to express at all.
  */
-function NewBucketForm({
-  kind,
-  options,
-  claimedBy,
-  disabled,
-  emptyLabel,
-  onCreate,
-}: {
-  kind: BudgetRow["kind"];
-  options: string[];
-  /**
-   * Which bucket already claims each category, so a taken option can be greyed
-   * out and attributed rather than silently hidden. Hiding it looked like the
-   * category had stopped existing.
-   */
-  claimedBy: Map<string, string>;
-  disabled: boolean;
-  emptyLabel: string;
-  onCreate: (payload: {
-    kind: BudgetRow["kind"];
-    name: string;
-    categories: string[];
-    budgeted: number;
-  }) => Promise<Response | null>;
-}) {
-  const [name, setName] = useState("");
-  /*
-   * A set, because a bucket is rarely one category: "Weekend" is dining AND
-   * entertainment, "Amazon" is general merchandise AND online shopping. One slot
-   * per bucket forced a choice between a vague name and several buckets fighting
-   * over the same transactions.
-   */
-  const [categories, setCategories] = useState<string[]>([]);
-  const [query, setQuery] = useState("");
-
-  const toggle = (value: string) =>
-    setCategories((current) =>
-      current.includes(value)
-        ? current.filter((entry) => entry !== value)
-        : [...current, value],
-    );
-
-  const visible = query.trim()
-    ? options.filter((value) =>
-        value.toLowerCase().includes(query.trim().toLowerCase()),
-      )
-    : options;
-
-  /*
-   * Offered for this form but already spoken for. Still rendered, still
-   * searchable - just not selectable - because "why can't I pick Groceries?" is a
-   * worse experience than "Groceries is already matched by Groceries".
-   */
-  const takenElsewhere = (value: string) => claimedBy.get(value) !== undefined;
-
-  const selectable = visible.filter((value) => !takenElsewhere(value));
-
-  const trimmed = name.trim();
-  const canCreate = trimmed.length > 0;
-
-  function submit() {
-    if (!canCreate) return;
-    // Cleared before the await so a slow save cannot be double-submitted, and
-    // so the form is ready for the next bucket either way.
-    setName("");
-    setCategories([]);
-    setQuery("");
-    return onCreate({ kind, name: trimmed, categories, budgeted: 0 });
-  }
-
-  return (
-    <div className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
-      <div className="mb-2 flex flex-wrap items-end gap-2">
-        <label className="block min-w-48 flex-1">
-          <span className="mb-1 block text-xs text-neutral-500">Name</span>
-          <input
-            {...selectAllProps}
-            value={name}
-            disabled={disabled}
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder="Whatever you want to call it"
-            className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-          />
-        </label>
-
-        {/*
-          A summary rather than a control. The chips below are the real picker -
-          a <select multiple> needs ctrl-click, scrolls to one item at a time, and
-          cannot say why an option is unavailable. This just reports the current
-          state of the choice and offers the one action that changes it.
-        */}
-        <div className="min-w-48 flex-1">
-          <span className="mb-1 block text-xs text-neutral-500">
-            Match transactions by (optional)
-          </span>
-          <div className="flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700">
-            {categories.length === 0 ? (
-              <span className="text-neutral-500">
-                Nothing - display only
-              </span>
-            ) : (
-              <>
-                {categories.map((value) => (
-                  <span
-                    key={value}
-                    className="flex items-center gap-1 rounded-full bg-neutral-900 px-2 py-0.5 text-xs text-white dark:bg-white dark:text-neutral-900"
-                  >
-                    {humanizeCategory(value)}
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => toggle(value)}
-                      aria-label={`Stop matching ${humanizeCategory(value)}`}
-                      className="opacity-70 hover:opacity-100"
-                    >
-                      &times;
-                    </button>
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setCategories([])}
-                  className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700"
-                >
-                  Clear
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          disabled={disabled || !canCreate}
-          onClick={() => void submit()}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
-        >
-          Create
-        </button>
-      </div>
-
-      {/*
-        Chips are the shortcut: one click picks the category and pre-fills the
-        name, which is still what you want most of the time. It no longer
-        creates the row on its own, because the name is meant to be editable.
-      */}
-      {options.length === 0 ? (
-        <p className="text-xs text-neutral-500">
-          No categories in your transactions yet. Name a bucket above and it will
-          stand on its own.
-        </p>
-      ) : (
-        <>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={`${emptyLabel} (${options.length})`}
-            className="mb-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-          />
-          <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-            {visible.map((value) => {
-              const owner = claimedBy.get(value);
-              const selected = categories.includes(value);
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  disabled={disabled || owner !== undefined}
-                  aria-pressed={selected}
-                  /*
-                    The tooltip is the whole point of greying rather than hiding:
-                    it names the bucket that already has this category. Two buckets
-                    claiming one category is not rejected - the first silently wins
-                    and the second reads $0 forever - so this is the only place the
-                    user is told.
-                  */
-                  title={
-                    owner !== undefined
-                      ? `Already matched by "${owner}"`
-                      : selected
-                        ? `Stop matching ${humanizeCategory(value)}`
-                        : `Also match ${humanizeCategory(value)}`
-                  }
-                  onClick={() => {
-                    toggle(value);
-                    // Only fill a name the user has not written themselves, and
-                    // only from the first pick - "Weekend" beats "Dining And Drink".
-                    if (!name.trim() && categories.length === 0) {
-                      setName(humanizeCategory(value));
-                    }
-                  }}
-                  className={`rounded-full border px-2.5 py-1 text-xs disabled:cursor-not-allowed ${
-                    selected
-                      ? "border-neutral-900 bg-neutral-900 text-white disabled:opacity-100 dark:border-white dark:bg-white dark:text-neutral-900"
-                      : owner !== undefined
-                        ? "border-neutral-200 text-neutral-400 line-through dark:border-neutral-800 dark:text-neutral-600"
-                        : "border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-700"
-                  }`}
-                >
-                  {humanizeCategory(value)}
-                </button>
-              );
-            })}
-            {visible.length === 0 ? (
-              <span className="text-xs text-neutral-500">No matches.</span>
-            ) : selectable.length === 0 && visible.length > 0 ? (
-              <span className="text-xs text-neutral-500">
-                Everything here is already matched by another bucket.
-              </span>
-            ) : null}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 function RowEditor({
   row,
   year,
@@ -810,7 +485,6 @@ function RowEditor({
   disabled,
   column,
   onSave,
-  onDelete,
 }: {
   row: BudgetRow;
   year: number;
@@ -823,7 +497,6 @@ function RowEditor({
     categories: string[];
     budgeted: number;
   }) => Promise<Response | null>;
-  onDelete: (id: number) => Promise<Response | null>;
 }) {
   const [text, setText] = useState(() =>
     formatCurrencyInput(String(row.budgeted)),
@@ -942,22 +615,9 @@ function RowEditor({
           */}
           {formatCurrency(value)}
         </span>
-        <button
-          type="button"
-          onClick={() => onDelete(row.id)}
-          disabled={disabled}
-          aria-label={`Delete ${row.name}`}
-          className="relative z-10 rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-red-600 disabled:opacity-50 dark:hover:bg-neutral-700"
-        >
-          &times;
-        </button>
+
       </div>
     </div>
   );
 }
 
-function isIncomeCategory(category: string): boolean {
-  return /INCOME|PAYROLL|PAYCHECK|INTEREST_EARNINGS/i.test(
-    category.toUpperCase(),
-  );
-}
