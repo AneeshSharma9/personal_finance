@@ -939,6 +939,23 @@ matches, and the budgets page would contradict the transactions page.
 `PATCH /api/transactions/[id]` accepts `budgetId` (null clears), `categoryOverride`
 and `notes`. An explicit `budgetId` in the same request wins over the clear.
 
+### Transaction details
+
+Clicking a transaction name opens a read-only dialog with the row already loaded
+on the page: amount and date, status, category lineage, account, budget, notes,
+currency, and Plaid-supplied website or logo. The launcher passes serializable data
+into the client modal, so the dialog makes no additional request.
+
+It deliberately does not show a raw original statement description. That field is
+not stored; "Description from Plaid" is exactly the description Plaid already
+supplied. Website links allow only HTTP(S), and logos must be HTTPS so an HTTP
+image cannot become mixed-content breakage.
+
+Bucket transactions use the dialog footer for the bucket-move selector, so each
+list row keeps only the details launcher, amount, and ignore control. The selector
+still writes through `PATCH /api/transactions/[id]` and uses the same lazy bucket
+loading.
+
 ### Per-bucket detail
 
 Bucket names link to `/budgets/[id]`, carrying the month you were viewing. Every

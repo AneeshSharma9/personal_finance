@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { TransactionDetailsButton } from "@/components/transaction-details";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { BucketTransaction } from "@/lib/queries";
 
@@ -16,13 +17,16 @@ import type { BucketTransaction } from "@/lib/queries";
 export function BucketTransactions({
   transactions,
   currentBucketId,
+  bucketName,
 }: {
   transactions: BucketTransaction[];
   currentBucketId: number;
+  bucketName: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   // All buckets the transaction could move to, fetched lazily and cached for the
   // session so each row's picker doesn't refetch.
@@ -47,6 +51,7 @@ export function BucketTransactions({
 
   async function move(transactionId: number, targetBucketId: number) {
     setError(null);
+    setMoveError(null);
     const response = await fetch(`/api/transactions/${transactionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -55,7 +60,7 @@ export function BucketTransactions({
 
     if (!response.ok) {
       const data = (await response.json()) as { error?: string };
-      setError(data.error ?? "Could not move that transaction.");
+      setMoveError(data.error ?? "Could not move that transaction.");
       return;
     }
     startTransition(() => router.refresh());
@@ -93,12 +98,12 @@ export function BucketTransactions({
 
   return (
     <div className="space-y-2">
-      {error ? (
+      {error ?? moveError ? (
         <p
           role="alert"
           className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300"
         >
-          {error}
+          {error ?? moveError}
         </p>
       ) : null}
 
@@ -113,9 +118,67 @@ export function BucketTransactions({
             }`}
           >
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {transaction.merchantName ?? transaction.name ?? "Unknown"}
-              </p>
+              <TransactionDetailsButton
+                transaction={{
+                  id: transaction.id,
+                  title:
+                    transaction.merchantName ?? transaction.name ?? "Unknown",
+                  bankDescription: transaction.name,
+                  signedAmount: transaction.signedAmount,
+                  date: transaction.date,
+                  authorizedDate: transaction.authorizedDate,
+                  pending: false,
+                  excluded: transaction.excluded,
+                  accountName: transaction.accountName,
+                  bucketName,
+                  categoryDisplay: transaction.displayCategory,
+                  categoryOverride: transaction.categoryOverride,
+                  plaidCategoryPrimary: transaction.plaidCategoryPrimary,
+                  plaidCategoryDetailed: transaction.plaidCategoryDetailed,
+                  notes: transaction.notes,
+                  currency: transaction.isoCurrencyCode,
+                  website: transaction.website,
+                  logoUrl: transaction.logoUrl,
+                }}
+                buttonClassName="block w-full truncate rounded-md px-1 py-0.5 text-left text-sm font-medium transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                footer={
+                  <div>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-neutral-500">
+                        Move to another bucket
+                      </span>
+                      <select
+                        defaultValue=""
+                        disabled={pending}
+                        onFocus={ensureBuckets}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value > 0) {
+                            void move(transaction.id, value);
+                          }
+                        }}
+                        className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800"
+                      >
+                        <option value="">Move to...</option>
+                        {buckets === null ? (
+                          <option disabled>loading...</option>
+                        ) : (
+                          buckets.map((bucket) => (
+                            <option key={bucket.id} value={bucket.id}>
+                              {bucket.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    {moveError ? (
+                      <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+                        {moveError}
+                      </p>
+                    ) : null}
+                  </div>
+                }
+              />
               <p className="text-xs text-neutral-500">
                 {formatDate(transaction.date)} &middot;{" "}
                 {transaction.displayCategory}
@@ -171,34 +234,6 @@ export function BucketTransactions({
               </svg>
             </button>
 
-            <label className="shrink-0">
-              <span className="sr-only">
-                Move {transaction.merchantName ?? transaction.name}
-              </span>
-              <select
-                defaultValue=""
-                disabled={pending}
-                onFocus={ensureBuckets}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value > 0) {
-                    void move(transaction.id, value);
-                  }
-                }}
-                className="rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800"
-              >
-                <option value="">Move to...</option>
-                {buckets === null ? (
-                  <option disabled>loading...</option>
-                ) : (
-                  buckets.map((bucket) => (
-                    <option key={bucket.id} value={bucket.id}>
-                      {bucket.name}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
           </li>
         ))}
       </ul>

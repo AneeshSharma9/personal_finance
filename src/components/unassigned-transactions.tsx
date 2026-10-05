@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { BackLink } from "@/components/back-link";
+import { TransactionDetailsButton } from "@/components/transaction-details";
 import { formatCurrency, formatDate, humanizeCategory } from "@/lib/format";
 import type { UnassignedTransaction } from "@/lib/queries";
 
@@ -136,9 +137,30 @@ export function UnassignedTransactions({
               }`}
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                  {transaction.merchantName ?? transaction.name ?? "Unknown"}
-                </p>
+                <TransactionDetailsButton
+                  transaction={{
+                    id: transaction.id,
+                    title:
+                      transaction.merchantName ?? transaction.name ?? "Unknown",
+                    bankDescription: transaction.name,
+                    signedAmount: transaction.signedAmount,
+                    date: transaction.date,
+                    authorizedDate: transaction.authorizedDate,
+                    pending: false,
+                    excluded: false,
+                    accountName: transaction.accountName,
+                    bucketName: "Unassigned",
+                    categoryDisplay: transaction.displayCategory,
+                    categoryOverride: transaction.categoryOverride,
+                    plaidCategoryPrimary: transaction.plaidCategoryPrimary,
+                    plaidCategoryDetailed: transaction.plaidCategoryDetailed,
+                    notes: transaction.notes,
+                    currency: transaction.isoCurrencyCode,
+                    website: transaction.website,
+                    logoUrl: transaction.logoUrl,
+                  }}
+                  buttonClassName="block w-full truncate rounded-md px-1 py-0.5 text-left text-sm font-medium transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                />
                 <p className="text-xs text-neutral-500">
                   {formatDate(transaction.date)} &middot;{" "}
                   {humanizeCategory(transaction.displayCategory)}

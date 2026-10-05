@@ -117,10 +117,16 @@ export type TransactionRow = {
   displayCategory: string;
   categoryOverride: string | null;
   plaidCategoryPrimary: string | null;
+  plaidCategoryDetailed: string | null;
   pending: boolean;
+  excluded: boolean;
   notes: string | null;
   website: string | null;
+  logoUrl: string | null;
+  isoCurrencyCode: string | null;
   accountName: string;
+  budgetId: number | null;
+  budgetName: string | null;
   /** Set when this transaction is tagged as a loan payment. */
   loanId: number | null;
 };
@@ -164,7 +170,7 @@ export async function getTransactions(
 
   const where = and(...conditions);
 
-  const [txns, accounts, tagged, [{ count }]] = await Promise.all([
+  const [txns, accounts, tagged, [{ count }], budgets] = await Promise.all([
     db.query.transactions.findMany({
       where,
       orderBy: [
@@ -196,9 +202,14 @@ export async function getTransactions(
       .select({ count: sql<number>`count(*)::int` })
       .from(tables.transactions)
       .where(where),
+    db.query.budgets.findMany({
+      where: eq(tables.budgets.userId, userId),
+      columns: { id: true, name: true },
+    }),
   ]);
 
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const budgetNameById = new Map(budgets.map((b) => [b.id, b.name]));
   const loanByTransaction = new Map(
     tagged.map((row) => [row.transactionId, row.loanId]),
   );
@@ -218,10 +229,17 @@ export async function getTransactions(
         displayCategory: t.categoryOverride ?? t.plaidCategoryPrimary ?? "Uncategorized",
         categoryOverride: t.categoryOverride,
         plaidCategoryPrimary: t.plaidCategoryPrimary,
+        plaidCategoryDetailed: t.plaidCategoryDetailed,
         pending: t.pending,
+        excluded: t.excluded,
         notes: t.notes,
         website: t.website,
+        logoUrl: t.logoUrl,
+        isoCurrencyCode: t.isoCurrencyCode,
         accountName: accountNameById.get(t.accountId) ?? "Unknown account",
+        budgetId: t.budgetId,
+        budgetName:
+          t.budgetId === null ? null : (budgetNameById.get(t.budgetId) ?? null),
         loanId: loanByTransaction.get(t.id) ?? null,
       };
     }),
@@ -442,9 +460,12 @@ export async function getSpendSummary(
 export type UnassignedTransaction = {
   id: number;
   date: string;
+  authorizedDate: string | null;
   amount: number;
+  signedAmount: number;
   merchantName: string | null;
   name: string | null;
+  accountName: string;
   /**
    * What Plaid thinks it is, or the user's own override when they set one.
    * Shown so the routing decision can be made against something rather than a
@@ -452,6 +473,12 @@ export type UnassignedTransaction = {
    */
   displayCategory: string;
   notes: string | null;
+  categoryOverride: string | null;
+  plaidCategoryPrimary: string | null;
+  plaidCategoryDetailed: string | null;
+  website: string | null;
+  logoUrl: string | null;
+  isoCurrencyCode: string | null;
   /**
    * The bucket the engine would file this in, or null when nothing would claim
    * it. Purely a preview - computed with the same matcher applyBudgetRules uses,
@@ -492,6 +519,7 @@ export async function getUnassignedTransactions(
     columns: {
       id: true,
       date: true,
+      authorizedDate: true,
       amount: true,
       merchantName: true,
       name: true,
@@ -501,9 +529,25 @@ export async function getUnassignedTransactions(
       // resolveBucket matches on the detailed category too, so the preview has to
       // carry it or it would suggest a different bucket than the engine picks.
       plaidCategoryDetailed: true,
+      website: true,
+      logoUrl: true,
+      isoCurrencyCode: true,
       notes: true,
     },
   });
+
+  const detailAccountIds = [...new Set(rows.map((row) => row.accountId))];
+  const accountNameById =
+    detailAccountIds.length === 0
+      ? new Map<number, string>()
+      : new Map(
+          (
+            await db.query.accounts.findMany({
+              where: inArray(tables.accounts.id, detailAccountIds),
+              columns: { id: true, name: true },
+            })
+          ).map((account) => [account.id, account.name]),
+        );
 
   const suggestions = await suggestBucketAssignments(
     userId,
@@ -522,14 +566,23 @@ export async function getUnassignedTransactions(
   return rows.map((row) => ({
     id: row.id,
     date: row.date,
+    authorizedDate: row.authorizedDate,
     amount: toNumber(row.amount),
+    signedAmount: -toNumber(row.amount),
     merchantName: row.merchantName,
     name: row.name,
+    accountName: accountNameById.get(row.accountId) ?? "Unknown account",
     displayCategory:
       row.categoryOverride ??
       row.plaidCategoryPrimary ??
       "Uncategorized",
     notes: row.notes,
+    categoryOverride: row.categoryOverride,
+    plaidCategoryPrimary: row.plaidCategoryPrimary,
+    plaidCategoryDetailed: row.plaidCategoryDetailed,
+    website: row.website,
+    logoUrl: row.logoUrl,
+    isoCurrencyCode: row.isoCurrencyCode,
     suggestedBudgetId: suggestions.get(row.id) ?? null,
   }));
 }
@@ -1047,11 +1100,19 @@ export type BucketTransaction = {
   id: number;
   plaidTransactionId: string;
   date: string;
+  authorizedDate: string | null;
   amount: number;
   merchantName: string | null;
   name: string | null;
+  accountName: string;
   displayCategory: string;
   notes: string | null;
+  categoryOverride: string | null;
+  plaidCategoryPrimary: string | null;
+  plaidCategoryDetailed: string | null;
+  website: string | null;
+  logoUrl: string | null;
+  isoCurrencyCode: string | null;
   /** Positive for spending; the bucket detail shows this sign as-is. */
   signedAmount: number;
   /**
@@ -1100,19 +1161,40 @@ export async function getTransactionsInBucket(
     limit: 500,
   });
 
+  const detailAccountIds = [...new Set(rows.map((row) => row.accountId))];
+  const accountNameById =
+    detailAccountIds.length === 0
+      ? new Map<number, string>()
+      : new Map(
+          (
+            await db.query.accounts.findMany({
+              where: inArray(tables.accounts.id, detailAccountIds),
+              columns: { id: true, name: true },
+            })
+          ).map((account) => [account.id, account.name]),
+        );
+
   return rows.map((row) => {
     const amount = toNumber(row.amount);
     return {
       id: row.id,
       plaidTransactionId: row.plaidTransactionId,
       date: row.date,
+      authorizedDate: row.authorizedDate,
       amount,
       signedAmount: -amount,
       merchantName: row.merchantName,
       name: row.name,
+      accountName: accountNameById.get(row.accountId) ?? "Unknown account",
       displayCategory:
         row.categoryOverride ?? row.plaidCategoryPrimary ?? "Uncategorized",
       notes: row.notes,
+      categoryOverride: row.categoryOverride,
+      plaidCategoryPrimary: row.plaidCategoryPrimary,
+      plaidCategoryDetailed: row.plaidCategoryDetailed,
+      website: row.website,
+      logoUrl: row.logoUrl,
+      isoCurrencyCode: row.isoCurrencyCode,
       // Kept in the bucket but not counted towards its total.
       excluded: row.excluded,
     };

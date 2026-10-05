@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { requireUser } from "@/lib/auth";
 import { CategoryEditor } from "@/components/category-editor";
+import { TransactionDetailsButton } from "@/components/transaction-details";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getAccounts, getCategories, getTransactions } from "@/lib/queries";
 
@@ -152,9 +153,29 @@ export default async function TransactionsPage({
             <li key={row.id} className="px-4 py-3">
               <div className="flex items-baseline justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">
-                    {row.merchantName ?? row.name ?? "Unknown"}
-                  </p>
+                  <TransactionDetailsButton
+                    transaction={{
+                      id: row.id,
+                      title: row.merchantName ?? row.name ?? "Unknown",
+                      bankDescription: row.name,
+                      signedAmount: row.signedAmount,
+                      date: row.date,
+                      authorizedDate: row.authorizedDate,
+                      pending: row.pending,
+                      excluded: row.excluded,
+                      accountName: row.accountName,
+                      bucketName: row.budgetName,
+                      categoryDisplay: row.displayCategory,
+                      categoryOverride: row.categoryOverride,
+                      plaidCategoryPrimary: row.plaidCategoryPrimary,
+                      plaidCategoryDetailed: row.plaidCategoryDetailed,
+                      notes: row.notes,
+                      currency: row.isoCurrencyCode,
+                      website: row.website,
+                      logoUrl: row.logoUrl,
+                    }}
+                    buttonClassName="block w-full truncate rounded-md px-1 py-0.5 text-left font-medium transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                  />
                   <p className="flex flex-wrap items-center gap-x-1 text-xs text-neutral-500">
                     {formatDate(row.date)} ·
                     <CategoryEditor

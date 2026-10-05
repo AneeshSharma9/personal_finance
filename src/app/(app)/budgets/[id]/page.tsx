@@ -181,6 +181,7 @@ export default async function BucketPage({
       <BucketTransactions
         transactions={transactions}
         currentBucketId={budget.id}
+        bucketName={budget.name}
       />
     </div>
   );
