@@ -274,6 +274,28 @@ function ColumnToggle({
   );
 }
 
+/**
+ * The remainder bucket's Budgeted cell: a figure, not a field.
+ *
+ * It is derived from the rest of the plan (lib/budget-remainder.ts) rather than
+ * stored, so an input here could only be a field that accepts a value and then
+ * ignores it — typing into it would look like it worked until the next edit
+ * somewhere else on the page quietly replaced it. The honest control is no control.
+ *
+ * The title carries the explanation, and the table's footer carries it visibly:
+ * a read-only field with no explanation reads as a broken one.
+ */
+function RemainderAmount({ value }: { value: number }) {
+  return (
+    <span
+      title="What is left of your budgeted income once every other bucket has been given its share. It moves as you edit the other rows."
+      className="text-right text-sm tabular-nums text-neutral-500"
+    >
+      {formatCurrency(value)}
+    </span>
+  );
+}
+
 function BudgetTable({
   title,
   subtitle,
@@ -340,8 +362,26 @@ function BudgetTable({
           />
         ))}
 
+        {rows.some((row) => row.isCatchAll) ? <RemainderNote /> : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * Why one row on this page cannot be typed into.
+ *
+ * Rendered inside the table that holds the remainder bucket rather than once at the
+ * bottom of the page, because it is about that row specifically: a note a screen
+ * away explains the feature without answering the question the row raises.
+ */
+function RemainderNote() {
+  return (
+    <p className="border-t border-neutral-100 px-4 py-2 text-xs text-neutral-500 dark:border-neutral-800">
+      Everything Else is the remainder, not another budget: it is your budgeted
+      earnings less every other bucket, so it moves as you edit any other row. If it
+      goes negative, you have allocated more than you budgeted coming in.
+    </p>
   );
 }
 
@@ -509,40 +549,44 @@ function RowEditor({
         </Link>
       </div>
 
-      <input
-        {...selectAllProps}
-        value={text}
-        disabled={disabled}
-        inputMode="decimal"
-        aria-label={`Budgeted for ${row.name}`}
-        onChange={(event) => setText(formatCurrencyInput(event.target.value))}
-        onBlur={(event) => {
-          const parsed = parseCurrencyInput(event.target.value);
-          // An emptied field is not a request to budget zero, so it snaps back
-          // rather than silently wiping a real figure.
-          if (parsed === null) {
-            reset();
-            return;
-          }
-          if (parsed === row.budgeted) return;
-          setSeen(parsed);
-          void onSave({
-            kind: row.kind,
-            name: row.name,
-            categories: row.categories,
-            budgeted: parsed,
-          });
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          // Escape abandons the edit instead of saving a half-typed figure.
-          if (event.key === "Escape") {
-            reset();
-            event.currentTarget.blur();
-          }
-        }}
-        className="relative z-10 w-full bg-transparent text-right text-sm tabular-nums outline-none disabled:opacity-50"
-      />
+      {row.isCatchAll ? (
+        <RemainderAmount value={row.budgeted} />
+      ) : (
+        <input
+          {...selectAllProps}
+          value={text}
+          disabled={disabled}
+          inputMode="decimal"
+          aria-label={`Budgeted for ${row.name}`}
+          onChange={(event) => setText(formatCurrencyInput(event.target.value))}
+          onBlur={(event) => {
+            const parsed = parseCurrencyInput(event.target.value);
+            // An emptied field is not a request to budget zero, so it snaps back
+            // rather than silently wiping a real figure.
+            if (parsed === null) {
+              reset();
+              return;
+            }
+            if (parsed === row.budgeted) return;
+            setSeen(parsed);
+            void onSave({
+              kind: row.kind,
+              name: row.name,
+              categories: row.categories,
+              budgeted: parsed,
+            });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            // Escape abandons the edit instead of saving a half-typed figure.
+            if (event.key === "Escape") {
+              reset();
+              event.currentTarget.blur();
+            }
+          }}
+          className="relative z-10 w-full bg-transparent text-right text-sm tabular-nums outline-none disabled:opacity-50"
+        />
+      )}
 
       <div className="flex items-center justify-end gap-1">
         <span

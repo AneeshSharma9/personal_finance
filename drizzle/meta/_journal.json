@@ -106,6 +106,13 @@
       "when": 1790971962514,
       "tag": "0014_budget_bucket_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791316059739,
+      "tag": "0015_rule_match_groups",
+      "breakpoints": true
     }
   ]
 }

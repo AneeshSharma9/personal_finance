@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 import { db, tables } from "@/db";
 import { requireUserId } from "@/lib/auth";
@@ -21,11 +21,10 @@ import {
  *
  * Replaces /api/budgets/rules, which could only target a bucket.
  *
- * A RULE IS ITS MATCH, NOT A ROW ID. Every row sharing
- * (match_type, match_value) is one step of that rule, and saving replaces the
- * whole set of steps: steps still listed are updated in place, steps no longer
- * listed are deleted and their writes undone, and steps newly listed are
- * inserted and applied.
+ * A RULE IS ITS GROUP, NOT A ROW ID. Every row sharing a `rule_group` is one step
+ * of that rule, repeated once per match value the rule names, and saving replaces
+ * the whole set: rows still wanted are updated in place, rows no longer wanted are
+ * deleted and their writes undone, and rows newly wanted are inserted and applied.
  *
  * This is the fix for the one-target rule. The old table was unique on
  * (user_id, match_type, match_value) and the save was an upsert on that key, so
@@ -41,6 +40,12 @@ import {
 
 /** A form will not build more than this, and it bounds one save's writes. */
 const MAX_STEPS = 10;
+
+/**
+ * Alternatives per rule. Low, because every value is repeated once per step: this
+ * is really a bound on how many rows one save can write.
+ */
+const MAX_MATCH_VALUES = 10;
 
 type StepCheck =
   | { ok: true; action: RuleAction }
@@ -73,17 +78,27 @@ async function reconcileBuckets(userId: string): Promise<number> {
   }
 }
 
-/** Every row belonging to one rule, in the order its steps should be shown. */
-async function rowsForMatch(
+/**
+ * Every row belonging to one rule, in the order its steps should be shown.
+ *
+ * Takes either the rule's group or the match it used to be identified by, because
+ * a rule saved before the column existed has no group - and `null` group is a real
+ * answer here, not a missing one, so the two cannot be collapsed into one lookup.
+ */
+async function rowsForRule(
   userId: string,
-  matchType: StoredRule["matchType"],
-  matchValue: string,
+  rule: { ruleGroup: string | null; matchType: StoredRule["matchType"]; matchValue: string },
 ) {
   return db.query.budgetRules.findMany({
     where: and(
       eq(tables.budgetRules.userId, userId),
-      eq(tables.budgetRules.matchType, matchType),
-      eq(tables.budgetRules.matchValue, matchValue),
+      rule.ruleGroup === null
+        ? and(
+            isNull(tables.budgetRules.ruleGroup),
+            eq(tables.budgetRules.matchType, rule.matchType),
+            eq(tables.budgetRules.matchValue, rule.matchValue),
+          )
+        : eq(tables.budgetRules.ruleGroup, rule.ruleGroup),
     ),
     orderBy: [
       asc(tables.budgetRules.priority),
@@ -93,10 +108,92 @@ async function rowsForMatch(
   });
 }
 
+/**
+ * One match value, normalised the same way whichever way it arrived.
+ *
+ * An amount rule has to be a number. Normalising here means "600" and "600.00" name
+ * one alternative rather than two that never both fire - and, since the value is
+ * the row's identity, it is what lets a re-save diff against what is stored instead
+ * of inserting a duplicate.
+ */
+function normaliseMatchValue(
+  matchType: StoredRule["matchType"],
+  raw: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "A match value cannot be blank." };
+  }
+  if (trimmed.length > 200) {
+    return { ok: false, error: "A match value must be 200 characters or fewer." };
+  }
+
+  if (matchType === "amount") {
+    const parsed = Number(trimmed.replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return {
+        ok: false,
+        error: "An amount rule needs a positive number, like 600.",
+      };
+    }
+    return { ok: true, value: parsed.toFixed(2) };
+  }
+  return {
+    ok: true,
+    value: matchType === "category" ? trimmed.toUpperCase() : trimmed.toLowerCase(),
+  };
+}
+
+/**
+ * The alternatives a rule matches on, OR'd together.
+ *
+ * Accepts either `matchValues` (a list) or the single `matchValue` it replaced, so
+ * a caller that only ever sends one value keeps working - which is most of them,
+ * and every saved rule from before this existed.
+ *
+ * De-duplicated *after* normalising, because "KFC" and "kfc" are one alternative
+ * and two rows claiming it would report every match twice.
+ */
+function parseMatchValues(
+  matchType: StoredRule["matchType"],
+  raw: Record<string, unknown>,
+): { values: string[] } | { error: string } {
+  const supplied = Array.isArray(raw.matchValues)
+    ? raw.matchValues
+    : typeof raw.matchValue === "string"
+      ? [raw.matchValue]
+      : null;
+
+  if (supplied === null) {
+    return { error: "matchValues is required." };
+  }
+  if (supplied.length === 0) {
+    return { error: "A rule needs at least one value to match on." };
+  }
+  if (supplied.length > MAX_MATCH_VALUES) {
+    return {
+      error: `A rule can match on at most ${MAX_MATCH_VALUES} values.`,
+    };
+  }
+
+  const values: string[] = [];
+  for (const entry of supplied) {
+    if (typeof entry !== "string") {
+      return { error: "matchValues must be an array of strings." };
+    }
+    const normalised = normaliseMatchValue(matchType, entry);
+    if (!normalised.ok) return { error: normalised.error };
+    if (!values.includes(normalised.value)) values.push(normalised.value);
+  }
+
+  return { values };
+}
+
 function toStored(row: {
   id: number;
   matchType: StoredRule["matchType"];
   matchValue: string;
+  ruleGroup: string | null;
   budgetId: number | null;
   loanId: number | null;
   exclude: boolean;
@@ -105,6 +202,7 @@ function toStored(row: {
     id: row.id,
     matchType: row.matchType,
     matchValue: row.matchValue,
+    ruleGroup: row.ruleGroup,
     budgetId: row.budgetId,
     loanId: row.loanId,
     exclude: row.exclude,
@@ -210,8 +308,9 @@ export async function GET() {
   return Response.json({
     rules: groups.map((group) => ({
       id: group.id,
+      ruleGroup: group.ruleGroup,
       matchType: group.matchType,
-      matchValue: group.matchValue,
+      matchValues: group.matchValues,
       steps: group.steps.map((step) => ({
         target: step.target,
         budgetId: step.budgetId,
@@ -271,32 +370,9 @@ export async function PUT(request: Request) {
   // literals narrows to `string`, so the literal union is restated here.
   const matchType = raw.matchType as "merchant" | "category" | "amount";
 
-  if (typeof raw.matchValue !== "string" || raw.matchValue.trim().length === 0) {
-    return Response.json({ error: "matchValue is required." }, { status: 400 });
-  }
-  let matchValue = raw.matchValue.trim();
-  if (matchValue.length > 200) {
-    return Response.json(
-      { error: "matchValue must be 200 characters or fewer." },
-      { status: 400 },
-    );
-  }
-
-  // An amount rule has to be a number. Normalising here means "600" and "600.00"
-  // name one rule rather than two that never both fire.
-  if (matchType === "amount") {
-    const parsed = Number(matchValue.replace(/[$,\s]/g, ""));
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return Response.json(
-        { error: "An amount rule needs a positive number, like 600." },
-        { status: 400 },
-      );
-    }
-    matchValue = parsed.toFixed(2);
-  } else if (matchType === "category") {
-    matchValue = matchValue.toUpperCase();
-  } else {
-    matchValue = matchValue.toLowerCase();
+  const matchValues = parseMatchValues(matchType, raw);
+  if ("error" in matchValues) {
+    return Response.json({ error: matchValues.error }, { status: 400 });
   }
 
   if (!Array.isArray(raw.steps)) {
@@ -345,18 +421,99 @@ export async function PUT(request: Request) {
       ? 0
       : Math.trunc(Number(raw.priority) || 0);
 
-  const before = await rowsForMatch(auth.userId, matchType, matchValue);
-  const keptByKey = new Map(
-    before.map((row) => [actionKey(actionOf(toStored(row))), row]),
+  /*
+   * Which rule is being saved.
+   *
+   * `ruleGroup` is the answer for an edit - it is stable even as the match values
+   * change, which is the whole reason it exists, since the old identity was the
+   * match itself and "UAS" becoming "UAS or US Department of Education" would have
+   * looked like a brand new rule. A new rule has no group, and is looked up by the
+   * first value so that re-saving an existing one from a fresh form still replaces
+   * it rather than duplicating it.
+   */
+  const ruleGroup =
+    typeof raw.ruleGroup === "string" && raw.ruleGroup.length > 0
+      ? raw.ruleGroup
+      : null;
+
+  const before = await rowsForRule(auth.userId, {
+    ruleGroup,
+    matchType,
+    matchValue: matchValues.values[0],
+  });
+
+  /*
+   * A group has to be one of this user's, or it does not exist.
+   *
+   * The form only ever sends back a group it was given, so this cannot happen
+   * through the app - but a group is not a secret, and posting another rule's group
+   * would fold this rule's rows into it, merging two unrelated rules into one list
+   * with one set of steps. A group that matches nothing here is a 404, which is also
+   * the truth: you cannot edit a rule that is not there.
+   */
+  if (ruleGroup !== null && before.length === 0) {
+    return Response.json({ error: "Rule not found." }, { status: 404 });
+  }
+
+  /*
+   * One key per (value, step) pair, which is what a row is. Used to build the set
+   * of rows the rule should end up with and to diff the stored rows against it -
+   * dropping an alternative deletes rows exactly like dropping a step does, and it
+   * has to undo the same writes.
+   */
+  const pairKey = (value: string, action: RuleAction) =>
+    `${value} ${actionKey(action)}`;
+
+  const wanted = new Map<string, { value: string; position: number }>();
+  for (const value of matchValues.values) {
+    for (const [position, step] of steps.entries()) {
+      wanted.set(pairKey(value, step), { value, position });
+    }
+  }
+
+  const keptByKey = new Map<string, (typeof before)[number]>();
+  for (const row of before) {
+    const key = pairKey(row.matchValue, actionOf(toStored(row)));
+    // Only the first row for a pair is kept; a duplicate could only exist from a
+    // partial save, and inserting a second would hit the unique index.
+    if (!keptByKey.has(key)) keptByKey.set(key, row);
+  }
+
+  const stale = before.filter(
+    (row) => !wanted.has(pairKey(row.matchValue, actionOf(toStored(row)))),
   );
-  const removed = before
-    .filter((row) => !seen.has(actionKey(actionOf(toStored(row)))))
-    .map(actionOf);
+
+  /**
+   * The claims being withdrawn, one entry per step rather than per row.
+   *
+   * Three rows for one removed alternative are one claim each, and undoing it three
+   * times would report the same transactions as nine.
+   */
+  const withdrawn = new Map<string, RuleAction>();
+  for (const row of stale) {
+    const action = actionOf(toStored(row));
+    const key = actionKey(action);
+    if (!withdrawn.has(key)) withdrawn.set(key, action);
+  }
+
+  /** Values whose rows are all being deleted, as opposed to ones that survive. */
+  const droppedValues = [
+    ...new Set(
+      stale
+        .map((row) => row.matchValue)
+        .filter((value) => !matchValues.values.includes(value)),
+    ),
+  ];
+
+  /*
+   * The group is assigned by the first save that finds the rule ungrouped, and
+   * reused afterwards. Generated here rather than asked for, because it is
+   * identity, not something the user types - and a hand-written one is one typo away
+   * from silently merging two rules that have nothing to do with each other.
+   */
+  const group = ruleGroup ?? before[0]?.ruleGroup ?? crypto.randomUUID();
 
   await db.transaction(async (tx) => {
-    const stale = before.filter(
-      (row) => !seen.has(actionKey(actionOf(toStored(row)))),
-    );
     if (stale.length > 0) {
       await tx
         .delete(tables.budgetRules)
@@ -368,26 +525,40 @@ export async function PUT(request: Request) {
         );
     }
 
-    for (const [position, step] of steps.entries()) {
-      const key = actionKey(step);
+    for (const [key, { value, position }] of wanted) {
       const existing = keptByKey.get(key);
 
       if (existing) {
-        // Only the order can have changed. Keeping the row keeps its id, its
-        // created_at, and a priority or active flag set outside this form.
-        if (existing.stepOrder !== position) {
+        /*
+         * Two things can need writing: the step's position, and the group.
+         *
+         * The group matters more than it looks. A rule saved before the column
+         * existed still has none, and identity falls back to its first value - so
+         * renaming that value would make the next save look like a new rule and
+         * leave the old one behind. Assigning the group on first contact is what
+         * stops that, and it keeps every row under one identity.
+         */
+        const changed =
+          existing.stepOrder !== position || existing.ruleGroup !== group;
+        if (changed) {
           await tx
             .update(tables.budgetRules)
-            .set({ stepOrder: position, updatedAt: new Date() })
+            .set({
+              stepOrder: position,
+              ruleGroup: group,
+              updatedAt: new Date(),
+            })
             .where(eq(tables.budgetRules.id, existing.id));
         }
         continue;
       }
 
+      const step = steps[position]!;
       await tx.insert(tables.budgetRules).values({
         userId: auth.userId,
         matchType,
-        matchValue,
+        matchValue: value,
+        ruleGroup: group,
         budgetId: step.budgetId,
         loanId: step.loanId,
         exclude: step.target === "ignore",
@@ -406,13 +577,21 @@ export async function PUT(request: Request) {
    * the rows above are already deleted; and the surviving steps run last so that
    * where a removed step and a kept step touched the same field, the kept one is
    * what the transaction ends up with.
+   *
+   * The values handed over are the surviving ones *and* the ones just dropped:
+   * both have writes to undo, and only the "someone else still claims this" check
+   * keeps the survivors' transactions from being reverted along with the dropped
+   * value's.
    */
   let reverted: RevertResult[] = [];
   try {
     reverted = await revertRuleSteps(
       auth.userId,
-      { matchType, matchValue },
-      removed,
+      {
+        matchType,
+        matchValues: [...matchValues.values, ...droppedValues],
+      },
+      [...withdrawn.values()],
     );
   } catch (error) {
     console.error(
@@ -423,7 +602,11 @@ export async function PUT(request: Request) {
 
   let applied: ApplyResult[] = [];
   try {
-    const saved = await rowsForMatch(auth.userId, matchType, matchValue);
+    const saved = await rowsForRule(auth.userId, {
+      ruleGroup: group,
+      matchType,
+      matchValue: matchValues.values[0],
+    });
     applied = await applyRulesToHistory(auth.userId, saved.map(toStored));
   } catch (error) {
     console.error(
@@ -435,7 +618,7 @@ export async function PUT(request: Request) {
   const bucketed = await reconcileBuckets(auth.userId);
 
   return Response.json({
-    rule: { matchType, matchValue },
+    rule: { matchType, matchValues: matchValues.values, ruleGroup: group },
     applied,
     reverted,
     // Transactions a loan step left unbucketed that routing then placed, so the
@@ -485,11 +668,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Rule not found." }, { status: 404 });
   }
 
-  const rows = await rowsForMatch(
-    auth.userId,
-    anchor.matchType,
-    anchor.matchValue,
-  );
+  const rows = await rowsForRule(auth.userId, {
+    ruleGroup: anchor.ruleGroup,
+    matchType: anchor.matchType,
+    matchValue: anchor.matchValue,
+  });
 
   try {
     const applied = await applyRulesToHistory(
@@ -500,7 +683,12 @@ export async function POST(request: Request) {
     const bucketed = await reconcileBuckets(auth.userId);
 
     return Response.json({
-      rule: { id: rows[0]?.id ?? anchor.id, steps: rows.length },
+      rule: {
+        id: rows[0]?.id ?? anchor.id,
+        // Rows, not steps: a two-value rule applies each step twice, and reporting
+        // "2 steps" for four writes would understate what just ran.
+        rows: rows.length,
+      },
       applied,
       bucketed,
     });
@@ -552,11 +740,11 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "Rule not found." }, { status: 404 });
   }
 
-  const rows = await rowsForMatch(
-    auth.userId,
-    anchor.matchType,
-    anchor.matchValue,
-  );
+  const rows = await rowsForRule(auth.userId, {
+    ruleGroup: anchor.ruleGroup,
+    matchType: anchor.matchType,
+    matchValue: anchor.matchValue,
+  });
 
   const deleted = await db
     .delete(tables.budgetRules)
@@ -576,10 +764,20 @@ export async function DELETE(request: Request) {
   // as they now stand rather than counting the step being removed.
   let reverted: RevertResult[] = [];
   try {
+    // Every value the rule had, not just the row the delete was addressed by:
+    // a two-value rule's writes were made under both, and undoing only one half
+    // would leave the rule's own transactions claimed by nothing.
     reverted = await revertRuleSteps(
       auth.userId,
-      { matchType: anchor.matchType, matchValue: anchor.matchValue },
-      rows.map(actionOf),
+      {
+        matchType: anchor.matchType,
+        matchValues: [...new Set(rows.map((row) => row.matchValue))],
+      },
+      [
+        ...new Map(
+          rows.map((row) => [actionKey(actionOf(row)), actionOf(row)]),
+        ).values(),
+      ],
     );
   } catch (error) {
     console.error(

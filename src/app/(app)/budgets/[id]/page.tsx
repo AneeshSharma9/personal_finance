@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
+import { displayLimit, planFrom } from "@/lib/budget-remainder";
 import { formatCurrency, monthRange, parseDateRange } from "@/lib/format";
 import {
   getBudgetForUser,
+  getBudgetLimits,
   getLatestTransactionMonth,
   getTransactionsInBucket,
 } from "@/lib/queries";
@@ -38,6 +40,15 @@ export default async function BucketPage({
   // 404 rather than a redirect: a bucket id that isn't the user's shouldn't be
   // distinguishable from one that doesn't exist.
   if (!budget) return <Invalid />;
+
+  /*
+   * The remainder bucket's limit is derived from the rest of the plan rather than
+   * stored, so it needs every other bucket's limit to be known — one extra query,
+   * and the reason this page could not simply read `monthlyLimit`. Without it, the
+   * figure in this header would disagree with the budgets page you just clicked
+   * through from. See lib/budget-remainder.ts.
+   */
+  const limits = await getBudgetLimits(user.id);
 
   // Resolve the month: explicit ?year/?month, else the newest month with data.
   const latest = await getLatestTransactionMonth(user.id);
@@ -117,7 +128,11 @@ export default async function BucketPage({
    * play. `monthsInRange` counts calendar months, which is what keeps this equal
    * to the figure on the cash flow page for the same window.
    */
-  const budgeted = Number(budget.monthlyLimit) * months;
+  const budgeted =
+    displayLimit(planFrom(limits), {
+      id: budget.id,
+      budgeted: Number(budget.monthlyLimit),
+    }) * months;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">

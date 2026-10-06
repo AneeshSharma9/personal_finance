@@ -18,16 +18,30 @@ import { selectAllProps } from "@/lib/select-all";
  * rule, and both run, so the payment is recorded and the transaction is still
  * counted as spending.
  *
- * Because a rule is its match rather than a row, editing means loading its steps
- * into the same form that created it and saving replaces the set. That is also
+ * The match can also be several ALTERNATIVES: "merchant contains UAS *or* US
+ * Department of Education" is one rule with one set of steps, rather than two
+ * rules that have to be edited in two places from then on. Editing either is
+ * editing the same rule.
+ *
+ * Because a rule is its group rather than a row, editing means loading its match
+ * and steps into the same form that created it and saving replaces the set. That
  * why a second step can be added at all - an earlier version upserted on the
  * match, so adding one silently replaced the other.
  *
  * Saving a rule applies it to transactions that already exist, and removing a
- * step undoes what that step did. Both are reported rather than hidden: a rule
- * that silently matches nothing looks identical to a broken one, and an undo
- * that silently skips rows looks identical to one that worked.
+ * step or an alternative undoes what that did. Both are reported rather than
+ * hidden: a rule that silently matches nothing looks identical to a broken one,
+ * and an undo that silently skips rows looks identical to one that worked.
  */
+
+/**
+ * One alternative in the form. `id` exists so React has a key that survives
+ * reordering, the way it does for steps.
+ */
+export type MatchDraft = {
+  id: number;
+  value: string;
+};
 
 /** One step in the form. `id` exists only while editing, so React has a key. */
 export type StepDraft = {
@@ -47,12 +61,23 @@ export type RuleStep = {
 
 export type Rule = {
   id: number;
+  /**
+   * The rule's stable identity, sent back on save so editing its values replaces
+   * the rule instead of creating another one. Null for a rule saved before rules
+   * could have alternatives, which the API then matches on its first value.
+   */
+  ruleGroup: string | null;
   matchType: "merchant" | "category" | "amount";
-  matchValue: string;
+  /** Alternatives, OR'd together. An ordinary rule has one entry. */
+  matchValues: string[];
   steps: RuleStep[];
 };
 
 let draftSeq = 0;
+const newMatch = (): MatchDraft => {
+  draftSeq += 1;
+  return { id: draftSeq, value: "" };
+};
 const newStep = (): StepDraft => {
   draftSeq += 1;
   return { id: draftSeq, target: "bucket", budgetId: "", loanId: "" };
@@ -95,16 +120,22 @@ export function RulesEditor({
   const noticeSeq = useRef(0);
 
   const [matchType, setMatchType] = useState<Rule["matchType"]>("merchant");
-  const [matchValue, setMatchValue] = useState("");
+  const [matches, setMatches] = useState<MatchDraft[]>([newMatch()]);
   const [steps, setSteps] = useState<StepDraft[]>([newStep()]);
   /**
-   * Id of the rule being edited, or null for a new one.
+   * Id of the rule being edited, or null for a new one, and the group that goes
+   * with it.
    *
-   * The match is what identifies the rule on the server, so this is only a
-   * handle for the UI: it decides whether the button says Save or Update, and
-   * which row is highlighted.
+   * The group is what identifies the rule on the server once its values can change,
+   * since the match itself no longer can: saving "UAS" as "UAS or US Department of
+   * Education" has to replace the rule rather than create a second one. The id is
+   * only a handle for the UI: it decides whether the button says Save or Update,
+   * and which row is highlighted.
    */
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{
+    id: number;
+    ruleGroup: string | null;
+  } | null>(null);
 
   async function call(input: string, init: RequestInit) {
     setError(null);
@@ -121,6 +152,25 @@ export function RulesEditor({
       setError("Could not reach the server.");
       return null;
     }
+  }
+
+  function updateMatch(id: number, value: string) {
+    setMatches((current) =>
+      current.map((match) => (match.id === id ? { ...match, value } : match)),
+    );
+  }
+
+  function addMatch() {
+    setMatches((current) => [...current, newMatch()]);
+  }
+
+  function removeMatch(id: number) {
+    // Never leave the form with no match: a rule that matches nothing is not a
+    // thing, so the last alternative has to be edited rather than removed. Same
+    // reasoning as the last step.
+    setMatches((current) =>
+      current.length === 1 ? current : current.filter((match) => match.id !== id),
+    );
   }
 
   function updateStep(id: number, patch: Partial<StepDraft>) {
@@ -155,15 +205,20 @@ export function RulesEditor({
 
   function resetForm() {
     setMatchType("merchant");
-    setMatchValue("");
+    setMatches([newMatch()]);
     setSteps([newStep()]);
-    setEditingId(null);
+    setEditing(null);
   }
 
-  /** Load a saved rule back into the form so its steps can be changed. */
+  /** Load a saved rule back into the form so its match and steps can be changed. */
   function editRule(rule: Rule) {
     setMatchType(rule.matchType);
-    setMatchValue(rule.matchValue);
+    setMatches(
+      rule.matchValues.map((value) => {
+        draftSeq += 1;
+        return { id: draftSeq, value };
+      }),
+    );
     setSteps(
       rule.steps.map((step) => {
         draftSeq += 1;
@@ -175,7 +230,7 @@ export function RulesEditor({
         };
       }),
     );
-    setEditingId(rule.id);
+    setEditing({ id: rule.id, ruleGroup: rule.ruleGroup });
     setNotice(null);
   }
 
@@ -186,7 +241,8 @@ export function RulesEditor({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         matchType,
-        matchValue,
+        matchValues: matches.map((match) => match.value),
+        ruleGroup: editing?.ruleGroup ?? undefined,
         steps: steps.map((step) => ({
           target: step.target,
           budgetId: step.target === "bucket" ? step.budgetId : undefined,
@@ -237,7 +293,7 @@ export function RulesEditor({
       reverted?: RevertReport[];
       bucketed?: number;
     };
-    if (editingId === id) resetForm();
+    if (editing?.id === id) resetForm();
     reportReverted(data.reverted ?? []);
   }
 
@@ -299,7 +355,9 @@ export function RulesEditor({
   }
 
   const canSave =
-    matchValue.trim().length > 0 && steps.length > 0 && steps.every(stepComplete);
+    matches.every((match) => match.value.trim().length > 0) &&
+    steps.length > 0 &&
+    steps.every(stepComplete);
 
   return (
     <div className="space-y-4">
@@ -307,50 +365,116 @@ export function RulesEditor({
         onSubmit={save}
         className="space-y-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
       >
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="block">
-            <span className={LABEL}>Match on</span>
-            <select
-              value={matchType}
-              onChange={(event) =>
-                setMatchType(event.target.value as Rule["matchType"])
-              }
-              className={INPUT}
-            >
-              <option value="merchant">Merchant contains</option>
-              <option value="category">Category</option>
-              <option value="amount">Exact amount</option>
-            </select>
-          </label>
+        {/*
+          The match type sits on its own row rather than beside the first value,
+          because a rule can now have several values and a two-column grid would
+          only ever have room for one. Values are OR'd, which the row states
+          outright - "or" between the fields is the whole semantic and it should
+          not be left to be inferred from a stack of inputs.
+        */}
+        <label className="block sm:max-w-xs">
+          <span className={LABEL}>Match on</span>
+          <select
+            value={matchType}
+            onChange={(event) =>
+              setMatchType(event.target.value as Rule["matchType"])
+            }
+            className={INPUT}
+          >
+            <option value="merchant">Merchant contains</option>
+            <option value="category">Category</option>
+            <option value="amount">Exact amount</option>
+          </select>
+        </label>
 
-          <label className="block">
-            <span className={LABEL}>
-              {matchType === "amount" ? "Amount" : "Value"}
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between">
+            <span className={LABEL + " mb-0"}>
+              {matchType === "amount" ? "Match any of these amounts" : "Match any of these"}
             </span>
-            {matchType === "category" ? (
-              <select
-                value={matchValue}
-                onChange={(event) => setMatchValue(event.target.value)}
-                className={INPUT}
+            <button
+              type="button"
+              onClick={addMatch}
+              className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              Add alternative
+            </button>
+          </div>
+
+          {matches.map((match, index) => (
+            <div
+              key={match.id}
+              className="flex flex-wrap items-end gap-2"
+            >
+              <span className="w-6 pb-2 text-center text-xs text-neutral-400">
+                {index === 0 ? "" : "or"}
+              </span>
+
+              <label className="block min-w-40 flex-1">
+                {/*
+                  A hidden label on every value but the first. Two visible labels
+                  reading "Value" twice tells the reader nothing, and a screen
+                  reader needs the field named, so the first one carries the name
+                  and the rest say which alternative they are.
+                */}
+                <span className={index === 0 ? LABEL : "sr-only"}>
+                  {index === 0
+                    ? matchType === "amount"
+                      ? "Amount"
+                      : "Value"
+                    : `${valueLabel(matchType)} alternative ${index + 1}`}
+                </span>
+                {matchType === "category" ? (
+                  <select
+                    value={match.value}
+                    onChange={(event) => updateMatch(match.id, event.target.value)}
+                    className={INPUT}
+                  >
+                    <option value="">Choose a category</option>
+                    {categories.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    {...selectAllProps}
+                    value={match.value}
+                    onChange={(event) => updateMatch(match.id, event.target.value)}
+                    placeholder={
+                      matchType === "amount" ? "453.91" : "KFC"
+                    }
+                    inputMode={matchType === "amount" ? "decimal" : "text"}
+                    className={INPUT}
+                  />
+                )}
+              </label>
+
+              <button
+                type="button"
+                disabled={matches.length === 1}
+                onClick={() => removeMatch(match.id)}
+                title="Remove this alternative and undo what it matched"
+                aria-label={`Remove alternative ${index + 1}`}
+                className={`${ICON_BUTTON} hover:text-red-600 dark:hover:text-red-400`}
               >
-                <option value="">Choose a category</option>
-                {categories.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                {...selectAllProps}
-                value={matchValue}
-                onChange={(event) => setMatchValue(event.target.value)}
-                placeholder={matchType === "amount" ? "453.91" : "KFC"}
-                inputMode={matchType === "amount" ? "decimal" : "text"}
-                className={INPUT}
-              />
-            )}
-          </label>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                  className="h-4 w-4"
+                >
+                  <path d="M6 6l12 12" />
+                  <path d="M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+          ))}
         </div>
 
         <div className="space-y-2">
@@ -522,9 +646,9 @@ export function RulesEditor({
             disabled={!canSave || pending}
             className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-300"
           >
-            {editingId === null ? "Save rule" : "Update rule"}
+            {editing === null ? "Save rule" : "Update rule"}
           </button>
-          {editingId === null ? null : (
+          {editing === null ? null : (
             <button
               type="button"
               onClick={resetForm}
@@ -556,17 +680,11 @@ export function RulesEditor({
             <li
               key={rule.id}
               className={`flex flex-wrap items-start justify-between gap-2 px-4 py-2.5 ${
-                editingId === rule.id ? "bg-neutral-50 dark:bg-neutral-900" : ""
+                editing?.id === rule.id ? "bg-neutral-50 dark:bg-neutral-900" : ""
               }`}
             >
               <div className="min-w-0 text-sm">
-                <p className="font-medium">
-                  {rule.matchType === "merchant"
-                    ? `Merchant contains "${rule.matchValue}"`
-                    : rule.matchType === "amount"
-                      ? `Amount is ${rule.matchValue}`
-                      : `Category ${rule.matchValue}`}
-                </p>
+                <p className="font-medium">{describeMatch(rule)}</p>
                 <ol className="mt-0.5 space-y-0.5 text-neutral-500">
                   {rule.steps.map((step, index) => (
                     <li key={`${rule.id}-${index}`}>
@@ -597,7 +715,7 @@ export function RulesEditor({
                   disabled={pending}
                   onClick={() => void rerun(rule.id)}
                   title="Re-apply this rule to all matching transactions"
-                  aria-label={`Re-apply the rule ${rule.matchType} ${rule.matchValue}`}
+                  aria-label={`Re-apply the rule ${rule.matchType} ${rule.matchValues.join(" or ")}`}
                   className="text-neutral-400 transition hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-200"
                 >
                   <svg
@@ -620,7 +738,7 @@ export function RulesEditor({
                   disabled={pending}
                   onClick={() => editRule(rule)}
                   title="Edit the steps of this rule"
-                  aria-label={`Edit the rule ${rule.matchType} ${rule.matchValue}`}
+                  aria-label={`Edit the rule ${rule.matchType} ${rule.matchValues.join(" or ")}`}
                   className="text-neutral-400 transition hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-200"
                 >
                   <svg
@@ -664,6 +782,30 @@ export function RulesEditor({
 
 type ApplyReport = { moved: number; matched: number; target: string };
 type RevertReport = { target: string; reverted: number; kept: number };
+
+/** "Amount" or "Merchant", for naming an alternative field. */
+function valueLabel(matchType: Rule["matchType"]): string {
+  return matchType === "amount" ? "Amount" : "Value";
+}
+
+/**
+ * The rule's match as a sentence: `Merchant contains "UAS" or "US Department of
+ * Education"`.
+ *
+ * The "or" is spelled out rather than left as a list, because a rule with three
+ * values that reads as three separate conditions is exactly the reading that makes
+ * someone think they are three rules to keep in step.
+ */
+function describeMatch(rule: Rule): string {
+  const phrase =
+    rule.matchType === "merchant"
+      ? (value: string) => `Merchant contains "${value}"`
+      : rule.matchType === "amount"
+        ? (value: string) => `Amount is ${value}`
+        : (value: string) => `Category ${value}`;
+
+  return rule.matchValues.map(phrase).join(" or ");
+}
 
 /** "pays the car loan" - the step, as a clause hanging off the match. */
 function describeStep(step: RuleStep): string {

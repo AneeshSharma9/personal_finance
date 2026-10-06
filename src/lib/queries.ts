@@ -4,7 +4,13 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
-import { isCatchAll } from "@/lib/categories";
+import { isRemainderBucket } from "@/lib/categories";
+import {
+  applyRemainderBucket,
+  displayLimit,
+  planFrom,
+  type RemainderInput,
+} from "@/lib/budget-remainder";
 import {
   getActualsByBucket,
   suggestBucketAssignments,
@@ -323,6 +329,12 @@ export async function getSpendByCategory(
  * also honours merchant rules and manual per-transaction choices - so the
  * number shown is always the one the engine agreed on, and the page and the
  * transactions list can never disagree.
+ *
+ * The remainder bucket's limit is derived on the way out rather than read from the
+ * row, see lib/budget-remainder.ts. Doing it here rather than in each caller is the
+ * point: the budgets grid, the dashboard's over-budget marks and the totals all read
+ * these rows, and a derived figure that only the grid applied would leave the other
+ * two judging the remainder bucket against a stale number.
  */
 export async function getBudgetsWithActuals(
   userId: string,
@@ -362,8 +374,7 @@ export async function getBudgetsWithActuals(
       percentUsed: budgeted > 0 ? (actual / budgeted) * 100 : null,
       isCatchAll:
         budget.budgetKind !== "earning" &&
-        budget.categories.length === 0 &&
-        isCatchAll(budget.name),
+        isRemainderBucket(budget.name, budget.categories),
     });
   }
 
@@ -371,7 +382,7 @@ export async function getBudgetsWithActuals(
     sortBudgetRows(rows);
   }
 
-  return groups;
+  return applyRemainderBucket(groups);
 }
 
 /**
@@ -606,6 +617,11 @@ export type BudgetSummaryTotals = {
  * Sourced from the same assignments as the per-bucket actuals, so the summary
  * can never disagree with the rows underneath it. "Leftover" is
  * `budgeted - spent`, which is what the ring visualises.
+ *
+ * `budgeted` carries the same derived remainder bucket the budget grid shows, for
+ * the same reason: this card sits directly above a "Spending Budget" total computed
+ * from those rows, and two figures with one name on one screen is not a rounding
+ * difference to be explained away. See lib/budget-remainder.ts.
  */
 export async function getBudgetSummary(
   userId: string,
@@ -614,7 +630,13 @@ export async function getBudgetSummary(
 ): Promise<BudgetSummaryTotals> {
   const buckets = await db.query.budgets.findMany({
     where: eq(tables.budgets.userId, userId),
-    columns: { id: true, budgetKind: true, monthlyLimit: true },
+    columns: {
+      id: true,
+      budgetKind: true,
+      monthlyLimit: true,
+      name: true,
+      categories: true,
+    },
     orderBy: [asc(tables.budgets.id)],
   });
 
@@ -630,7 +652,6 @@ export async function getBudgetSummary(
 
   const actuals = await getActualsByBucket(userId, from, to);
 
-  let budgeted = 0;
   let spent = 0;
   let income = 0;
 
@@ -640,9 +661,16 @@ export async function getBudgetSummary(
       income += actual;
       continue;
     }
-    budgeted += toNumber(bucket.monthlyLimit);
     spent += actual;
   }
+
+  /*
+   * The budgeted figures come from the plan rather than from summing the stored
+   * limits, because the remainder bucket's limit is derived — see
+   * lib/budget-remainder.ts. `income` above stays an actual: this card reports what
+   * arrived, while `budgeted` is the plan those rows are being measured against.
+   */
+  const budgeted = planFrom(buckets.map(toRemainderInput)).spendingBudgeted;
 
   return {
     budgeted,
@@ -1032,12 +1060,19 @@ export async function getCashFlow(
 
   const buckets = await db.query.budgets.findMany({
     where: eq(tables.budgets.userId, userId),
-    columns: { id: true, name: true, budgetKind: true, monthlyLimit: true },
+    columns: {
+      id: true,
+      name: true,
+      budgetKind: true,
+      monthlyLimit: true,
+      categories: true,
+    },
     orderBy: [asc(tables.budgets.sortOrder), asc(tables.budgets.id)],
   });
 
   if (buckets.length === 0) return empty;
 
+  const plan = planFrom(buckets.map(toRemainderInput));
   const actuals = await getActualsByBucket(userId, from, to);
   const accountIds = await getAccountIds(userId);
   const breakdownByBucket = await getCategoryBreakdownByBucket(
@@ -1062,10 +1097,15 @@ export async function getCashFlow(
       budgetId: bucket.id,
       amount,
       // An earnings bucket's limit is a target, not a cost, and spending buckets
-      // are the only ones a limit means anything for.
+      // are the only ones a limit means anything for. The remainder bucket's limit
+      // is derived rather than stored, so it is read through the plan like every
+      // other derived figure here - see lib/budget-remainder.ts.
       budgeted: isEarning
         ? 0
-        : toNumber(bucket.monthlyLimit) * Math.max(months, 1),
+        : displayLimit(plan, {
+            id: bucket.id,
+            budgeted: toNumber(bucket.monthlyLimit),
+          }) * Math.max(months, 1),
       breakdown: breakdownByBucket.get(bucket.id) ?? [],
     };
 
@@ -1299,6 +1339,54 @@ export async function getBudgets(userId: string): Promise<tables.Budget[]> {
     // user's own arrangement, so use it.
     orderBy: (b, { asc }) => [asc(b.sortOrder), asc(b.id)],
   });
+}
+
+/**
+ * Every bucket's limit, as the remainder derivation reads it.
+ *
+ * Narrow on purpose — no actuals, no assignments — so a page that only needs the
+ * plan does not pay for the per-bucket work `getBudgetsWithActuals` does. `planFrom`
+ * over the result is all any of them need to display a limit correctly; see
+ * `displayLimit`.
+ */
+export async function getBudgetLimits(
+  userId: string,
+): Promise<RemainderInput[]> {
+  const rows = await db.query.budgets.findMany({
+    where: eq(tables.budgets.userId, userId),
+    columns: {
+      id: true,
+      budgetKind: true,
+      name: true,
+      categories: true,
+      monthlyLimit: true,
+    },
+    orderBy: [asc(tables.budgets.id)],
+  });
+
+  return rows.map(toRemainderInput);
+}
+
+/**
+ * One stored budget row as the derivation reads it.
+ *
+ * Exported because four places now need the same five columns off the same table,
+ * and a hand-written mapping at each of them is four chances to leave one out.
+ */
+export function toRemainderInput(bucket: {
+  id: number;
+  budgetKind: tables.BudgetKind;
+  name: string;
+  categories: string[];
+  monthlyLimit: string;
+}): RemainderInput {
+  return {
+    id: bucket.id,
+    kind: bucket.budgetKind,
+    name: bucket.name,
+    categories: bucket.categories,
+    budgeted: toNumber(bucket.monthlyLimit),
+  };
 }
 
 export async function getManualAccounts(

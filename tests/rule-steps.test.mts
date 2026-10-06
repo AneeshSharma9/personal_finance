@@ -6,6 +6,7 @@ import {
   actionOf,
   groupRuleRows,
   matchesStoredRule,
+  ruleKey,
   type RuleAction,
   type StoredRule,
 } from "@/lib/rules";
@@ -139,10 +140,10 @@ test("rules come back in the order they first appear, however their rows are int
   ]);
 
   assert.deepEqual(
-    groups.map((g) => [g.matchValue, g.steps.length]),
+    groups.map((g) => [g.matchValues, g.steps.length]),
     [
-      ["453.91", 2],
-      ["600.00", 2],
+      [["453.91"], 2],
+      [["600.00"], 2],
     ],
   );
   // And the second rule's own steps are in the order they arrived.
@@ -160,6 +161,122 @@ test("the same value under a different match type is a different rule", () => {
   ]);
 
   assert.equal(groups.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Alternatives: one rule, several values
+// ---------------------------------------------------------------------------
+
+const GROUP = "3f6c1c5e-0000-4000-8000-000000000001";
+
+const merchantRow = (
+  id: number,
+  matchValue: string,
+  over: Partial<StoredRule> = {},
+): StoredRule => ({
+  id,
+  matchType: "merchant",
+  matchValue,
+  budgetId: 12,
+  loanId: null,
+  ruleGroup: GROUP,
+  ...over,
+});
+
+test("two alternatives sharing a group are one rule with both values", () => {
+  /*
+   * The case this exists for: "UAS or US Department of Education goes to Student
+   * Loans". Stored as two rows, because each row still matches exactly one thing -
+   * but they are one rule, so the step is stored once and edited once.
+   */
+  const groups = groupRuleRows([
+    merchantRow(1, "uas"),
+    merchantRow(2, "us department of education"),
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].matchValues, ["uas", "us department of education"]);
+  assert.equal(groups[0].steps.length, 1, "one step, not one per row");
+  assert.equal(groups[0].ruleGroup, GROUP);
+});
+
+test("two alternatives and two steps are four rows and still one rule", () => {
+  /*
+   * The step is repeated per value on purpose - that is what lets a transaction
+   * matching only the second alternative still get the loan payment - so the
+   * collapse has to de-duplicate the steps back out of the four rows.
+   */
+  const groups = groupRuleRows([
+    merchantRow(1, "uas", { loanId: 7, budgetId: null }),
+    merchantRow(2, "us department of education", { loanId: 7, budgetId: null }),
+    merchantRow(3, "uas", { budgetId: 12, loanId: null }),
+    merchantRow(4, "us department of education", { budgetId: 12, loanId: null }),
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].matchValues.length, 2);
+  assert.deepEqual(
+    groups[0].steps.map((step) => step.target),
+    ["loan", "bucket"],
+    "steps keep the order the rows arrived in",
+  );
+});
+
+test("a row with no group is still the rule its match describes", () => {
+  /*
+   * The migration groups every existing rule, so this only happens for a row
+   * written by a path that forgot the column. Falling back to the match keeps such
+   * a row part of its rule instead of quietly duplicating the whole thing.
+   */
+  const groups = groupRuleRows([
+    { ...merchantRow(1, "kfc"), ruleGroup: null },
+    { ...merchantRow(2, "kfc", { loanId: 7, budgetId: null }), ruleGroup: null },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].ruleGroup, null);
+  assert.equal(groups[0].steps.length, 2);
+});
+
+test("one rule's rows cannot be split by an interleaved second rule", () => {
+  const groups = groupRuleRows([
+    merchantRow(1, "uas"),
+    merchantRow(2, "whole foods", { ruleGroup: "other" }),
+    merchantRow(3, "us department of education"),
+  ]);
+
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].matchValues.length, 2);
+  assert.deepEqual(groups[1].matchValues, ["whole foods"]);
+});
+
+test("a group identifies a rule whatever its values are", () => {
+  /*
+   * Why a generated group exists at all: identity cannot be the match once the
+   * match is editable. Renaming "UAS" to "UAS or US DOE" has to be the same rule.
+   */
+  const before = ruleKey({ matchType: "merchant", matchValue: "uas", ruleGroup: GROUP });
+  const after = ruleKey({
+    matchType: "merchant",
+    matchValue: "uas",
+    ruleGroup: GROUP,
+  });
+  assert.equal(before, after);
+
+  assert.notEqual(
+    before,
+    ruleKey({ matchType: "merchant", matchValue: "uas", ruleGroup: "other" }),
+  );
+  // Ungrouped rows still fall back to the match, and the match type is part of it:
+  // "453.91" as an amount and as a category are different statements.
+  assert.notEqual(
+    ruleKey({ matchType: "amount", matchValue: "453.91", ruleGroup: null }),
+    ruleKey({ matchType: "category", matchValue: "453.91", ruleGroup: null }),
+  );
+  assert.notEqual(
+    ruleKey({ matchType: "merchant", matchValue: "a", ruleGroup: null }),
+    ruleKey({ matchType: "merchant", matchValue: "a b", ruleGroup: null }),
+  );
 });
 
 test("a single-step rule comes back as a rule with one step", () => {

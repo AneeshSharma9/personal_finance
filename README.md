@@ -461,12 +461,54 @@ details make that usable rather than merely correct, and both are load-bearing:
 the box and typing zero are different intentions, and conflating them wipes a
 real budget on blur.
 
+The one exception is **Everything Else**, which has no field at all — see below.
+
 Colour follows the row's group, not the arithmetic. Over budget is red for
 spending and **green for income** — exceeding the target on the earnings row is
 the point, and it used to render the same red as overspending. The **Spending
 Budget** footer turns red when the month's actual passes the total budgeted,
 which is the one figure that says whether the month worked; it was previously the
 same muted grey at 40% and at 140%.
+
+### Everything Else is the remainder, not a budget
+
+Every other row's **Budgeted** figure is a decision you made. The remainder
+bucket's is an output: your **budgeted earnings** less every amount set on the
+other buckets. It is derived in `src/lib/budget-remainder.ts` on every render,
+and the stored `monthlyLimit` on that row is ignored wherever a plan is built.
+
+Which is why its cell is a figure rather than an input. A field there could only
+accept a value and then discard it — typing into it would appear to work until
+the next edit elsewhere on the page quietly replaced it — so the table's footer
+carries the explanation instead, and editing it is done by editing something
+else. Nothing is written back to the row, which is what keeps the figure correct
+the moment any other bucket changes rather than only after the next save.
+
+Consequences worth knowing:
+
+- The **Spending Budget** total now equals the budgeted earnings by
+  construction. The arithmetic that used to be the user's job on every row is the
+  page's.
+- Income is the **budgeted** earnings, not the money that actually arrived.
+  Using actuals would mean the remainder moved as deposits landed, so a figure
+  typed into Rent would quietly stop meaning what was typed.
+- Over-allocating shows as a **negative** remainder rather than clamping to zero.
+  Clamping would hide the shortfall *and* leave the totals adding up to more than
+  the income. The note under the table says so.
+- No remainder bucket means no remainder — a plan without one is reported as-is,
+  not as one over-allocated by the whole income.
+
+A bucket is only the remainder if it has **no categories** as well as the right
+name (`isRemainderBucket` in `src/lib/categories.ts`). "Everything Else" plus
+`[ENTERTAINMENT]` is a real bucket with a confusing name, and stays editable. If
+there are somehow two, the older one takes the figure — the same first-one-wins
+the routing engine uses — and the extra keeps its own limit.
+
+**Every view that shows a limit goes through it.** The grid and the summary card
+get it from `getBudgetsWithActuals` and `getBudgetSummary`; the buckets list, a
+bucket's own page and the cash flow diagram use `displayLimit` over
+`getBudgetLimits`. Those three are one click from the budget page, and each of them
+reading `monthlyLimit` directly would put a stale figure next to a current one.
 
 ### Automatic assignment
 
@@ -1293,25 +1335,80 @@ Both run. The loan write and the bucket write touch different columns, so the
 same transaction ends up recorded as a car-loan payment *and* counted as car
 spending — which is the point of expressing them as one rule.
 
-**One row in `budget_rules` is one step.** Every row sharing a
-`(match_type, match_value)` belongs to the same rule, so a rule's identity is its
-match, not a row id. `PUT` replaces the whole set: steps still listed are updated
-in place, steps no longer listed are deleted, only genuinely new steps are
-inserted.
+Each *step* still satisfies `budget_rules_one_target_check` — exactly one of
+`budget_id`, `loan_id`, `exclude` — so no individual row is ambiguous; only the
+rule as a whole has several targets.
 
 This replaced a one-target design where the table was unique on
 `(user_id, match_type, match_value)` and saving was an upsert on that key. Adding
 a second target therefore **replaced** the first instead of joining it, so a
-"pay the car loan" rule silently became a "spend on car payments" rule. Each
-*step* still satisfies `budget_rules_one_target_check` — exactly one of
-`budget_id`, `loan_id`, `exclude` — so no individual row is ambiguous; only the
-rule as a whole has several targets.
+"pay the car loan" rule silently became a "spend on car payments" rule.
+
+### One row is one (value, step) pair
+
+Every row in `budget_rules` belongs to a `rule_group`, and the rule *is* that
+group:
+
+```
+rule_group  A   match_type merchant   match_value uas                     → Student Loans
+rule_group  A   match_type merchant   match_value uas                     → Ignore
+rule_group  A   match_type merchant   match_value us department of education → Student Loans
+rule_group  A   match_type merchant   match_value us department of education → Ignore
+```
+
+Two values × two steps is four rows. Rows sharing a group are one rule, and
+`groupRuleRows` collapses them back into `{matchValues, steps}` for display.
+
+**Why one row per (value, step) and not an array of values on the row:** it means
+every row still matches exactly one thing and does exactly one thing. The routing
+engine, the undo path and the one-target constraint all read rows individually and
+carry on unchanged — no matcher anywhere has to learn what a list of values is, and
+the existing unique index
+`(user_id, match_type, match_value, target)` already prevents duplicates for
+free.
+
+**Why a group id rather than the match:** identity cannot be the match once the
+match is editable. A rule's identity was `(match_type, match_value)`, so growing a
+rule from one value to two looked like deleting one rule and creating two. The
+group is generated server-side, because identity is not something a user types and
+a hand-written one is one typo away from silently merging two unrelated rules.
+Migration `0015` groups every existing rule so nothing changes underneath.
+
+`ruleKey` falls back to `(match_type, match_value)` for a row with no group, so a
+row written by a path that forgot the column still reads as the rule it was rather
+than as its own single-value rule.
+
+### A rule can match on several values
+
+```
+Match: merchant contains "uas" or "us department of education"
+  1. send to  → Student Loans
+```
+
+The alternatives are **OR'd**: a transaction is in scope when it matches any of
+them. They work for all three match types, and the form shows an `or` between the
+fields because "several inputs" otherwise reads as several conditions.
+
+Consequences worth knowing:
+
+- **Adding an alternative applies it to history**, like any other save.
+- **Removing one un-claims what only it matched.** The transactions that a
+  surviving alternative still matches are left alone, because they are still
+  claimed by a row that is still there — the same check that keeps a hand-tagged
+  loan payment safe.
+- **The step is written once.** Two alternatives with the same target store the
+  step twice, because a transaction matching only the second one still has to get
+  it — but the rules list shows one rule with one numbered list of steps.
+- Values are normalised before de-duplication (`KFC` and `kfc` are one
+  alternative, not two rows each reporting every match), and `600` and `600.00`
+  are still one amount.
 
 ### Editing
 
-Each rule has an **edit** button that loads its steps back into the same form,
-so steps can be added, removed, reordered, or retargeted. Removing a step is not
-just "stop doing this going forward" — see [Undo](#undoing-a-step).
+Each rule has an **edit** button that loads its match and steps back into the same
+form, so values and steps can be added, removed, reordered, or retargeted.
+Removing a step or an alternative is not just "stop doing this going forward" —
+see [Undo](#undoing-a-step).
 
 ### Match types
 
@@ -1357,8 +1454,12 @@ been assigned.
 
 Saving a rule therefore applies every step to every matching transaction,
 overwriting existing assignments, and the response reports `applied` — one
-`{moved, matched, target}` per step, so the page can say what each one did. A
+`{moved, matched, target}` per **row**, so the page can say what each one did. A
 rule that silently matched nothing would be indistinguishable from a working one.
+
+With alternatives in play that is one entry per (value, step) pair, so a
+two-value rule reports its step twice. That is what it did: the two passes reach
+different transactions, and the counts still add up per target.
 
 The one thing it does **not** do is create a rule from a per-transaction
 reassignment; those remain one-off.
@@ -1378,6 +1479,13 @@ routing, and skips transactions that already have a payment.
 Removing a step undoes what it did, because a step that wrote loan payments has
 already moved a debt balance — leaving those behind would leave the rule's
 history asserting something untrue. Deleting a rule undoes all of its steps.
+
+Removing an **alternative** is the same operation on a subset: the rule and its
+steps survive, but the transactions only that alternative matched stop being
+claimed. The candidate set is therefore every value whose writes might need
+undoing — surviving *and* just-dropped — and the "still wanted by something" check
+below is what stops a surviving alternative's transactions from being reverted
+along with the dropped one's.
 
 The writes are not always the step's alone, so each one is checked against
 everything that still wants it and left alone if so (`kept` in the response):
@@ -1411,6 +1519,11 @@ same `matchesStoredRule` that `applyRulesToHistory` does, so the number here and
 what saving a rule actually does cannot disagree — which is the only property worth
 having. A rule list that filtered in SQL would be faster and might well answer a
 slightly different question, and a confidently wrong count is worse than none.
+
+For a rule with alternatives the count is over all of them, asking the matcher
+once per value. Joining the values into one string and asking for a substring
+would match nothing at all and would look exactly like a rule that had stopped
+working.
 
 Because that matcher lives beside the routing engine in a `server-only` module, the
 matching runs on the server and only the capped preview crosses to the client.

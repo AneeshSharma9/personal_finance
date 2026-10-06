@@ -30,9 +30,15 @@ const tx = (over: Partial<RuleCandidate> = {}): RuleCandidate => ({
   ...over,
 });
 
-const merchant = { matchType: "merchant" as const, matchValue: "blue bottle" };
-const amount = { matchType: "amount" as const, matchValue: "12.5" };
-const category = { matchType: "category" as const, matchValue: "FOOD_AND_DRINK" };
+const merchant = {
+  matchType: "merchant" as const,
+  matchValues: ["blue bottle"],
+};
+const amount = { matchType: "amount" as const, matchValues: ["12.5"] };
+const category = {
+  matchType: "category" as const,
+  matchValues: ["FOOD_AND_DRINK"],
+};
 
 test("a merchant rule matches on merchant or description", () => {
   const byMerchant = transactionsForRule([tx()], merchant);
@@ -45,7 +51,7 @@ test("a merchant rule matches on merchant or description", () => {
   );
   assert.equal(noMerchant.total, 1);
 
-  assert.equal(transactionsForRule([tx()], { ...merchant, matchValue: "kfc" }).total, 0);
+  assert.equal(transactionsForRule([tx()], { ...merchant, matchValues: ["kfc"] }).total, 0);
 });
 
 test("an amount rule matches on magnitude, so either sign hits", () => {
@@ -151,7 +157,87 @@ test("the summary agrees with the count in every case", () => {
 });
 
 test("a rule that matches nothing says so, which is the common failure", () => {
-  const result = transactionsForRule([tx()], { ...merchant, matchValue: "kfc" });
+  const result = transactionsForRule([tx()], { ...merchant, matchValues: ["kfc"] });
   assert.equal(result.total, 0);
   assert.equal(summariseMatches(result), "No matching transactions");
+});
+
+// ---------------------------------------------------------------------------
+// Alternatives
+// ---------------------------------------------------------------------------
+
+test("a rule listing two values matches a transaction on either", () => {
+  /*
+   * The whole point of the feature: one rule, "UAS" or "US Department of
+   * Education", and the page's count has to cover both - or the user edits the rule
+   * and the number they were shown turns out to have been wrong.
+   */
+  const uas = tx({ id: 1, merchantName: "UAS FLIGHT 8821", name: null });
+  const dept = tx({
+    id: 2,
+    merchantName: "US DEPARTMENT OF EDUCATION",
+    name: null,
+  });
+  const neither = tx({ id: 3, merchantName: "Whole Foods", name: null });
+
+  const result = transactionsForRule(
+    [uas, dept, neither],
+    {
+      matchType: "merchant",
+      matchValues: ["uas", "us department of education"],
+    },
+  );
+
+  assert.equal(result.total, 2);
+  assert.deepEqual(result.matches.map((m) => m.id), [2, 1]);
+});
+
+test("alternatives are OR, not AND, and not one joined substring", () => {
+  /*
+   * Joining the values into "uas or us department of education" and asking for a
+   * substring would match nothing at all, and would look exactly like a rule that
+   * had stopped working.
+   */
+  const result = transactionsForRule(
+    [tx({ merchantName: "UAS FLIGHT", name: null })],
+    {
+      matchType: "merchant",
+      matchValues: ["uas", "us department of education"],
+    },
+  );
+  assert.equal(result.total, 1);
+});
+
+test("a transaction matching both alternatives is counted once", () => {
+  // "uas" and "uas flight" both match, and the row is still one row to route.
+  const result = transactionsForRule(
+    [tx({ merchantName: "UAS FLIGHT", name: null })],
+    { matchType: "merchant", matchValues: ["uas", "uas flight"] },
+  );
+  assert.equal(result.total, 1);
+});
+
+test("alternatives work for every match type, not just merchant", () => {
+  assert.equal(
+    transactionsForRule(
+      [tx({ amount: 600 }), tx({ amount: 700 }), tx({ amount: 800 })],
+      { matchType: "amount", matchValues: ["600", "700"] },
+    ).total,
+    2,
+  );
+
+  assert.equal(
+    transactionsForRule(
+      [
+        tx({ id: 1, plaidCategoryPrimary: "TRANSPORTATION" }),
+        tx({
+          id: 2,
+          categoryOverride: "TRAVEL",
+          plaidCategoryPrimary: "FOOD_AND_DRINK",
+        }),
+      ],
+      { matchType: "category", matchValues: ["TRANSPORTATION", "TRAVEL"] },
+    ).total,
+    2,
+  );
 });

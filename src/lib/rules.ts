@@ -18,23 +18,56 @@ import { clearLoanPayment, recordLoanPayment } from "@/lib/loan-payments";
  * "make everything matching this rule go to Shopping" is only useful if it
  * includes last month's KFC.
  *
- * A RULE IS A SET OF STEPS. Every row in `budget_rules` sharing a
- * (match_type, match_value) is one step of one rule, and each step does its own
- * thing to the transactions the match finds. "Amount 453.91 pays the car loan"
- * and "amount 453.91 lands in Car Payment" are two steps of one rule, and both
- * run - the loan write mints a payment and moves a debt balance while the bucket
- * write sets a category, neither of which gets in the other's way.
+ * A RULE IS A SET OF STEPS. Every row in `budget_rules` that shares a `rule_group`
+ * is one step of one rule, and each step does its own thing to the transactions the
+ * match finds. "Amount 453.91 pays the car loan" and "amount 453.91 lands in Car
+ * Payment" are two steps of one rule, and both run - the loan write mints a payment
+ * and moves a debt balance while the bucket write sets a category, neither of which
+ * gets in the other's way.
+ *
+ * A rule may also match on SEVERAL VALUES, OR'd together: "merchant contains UAS
+ * *or* US Department of Education" is one rule with two values and one set of
+ * steps. It is stored as one row per (value, step) pair rather than as an array on
+ * the row, which means every row still matches exactly one thing and does exactly
+ * one thing - so routing, the undo path and the one-target constraint all read the
+ * same rows they always did, and no matcher has to learn what a list of values is.
+ * `ruleKey` is what puts the rows back together.
  */
 
 export type StoredRule = {
   id: number;
   matchType: "merchant" | "category" | "amount";
   matchValue: string;
+  /**
+   * Rows sharing this are one rule. Absent on a row that predates the column, and
+   * on one written before rules could have several values - see `ruleKey`.
+   */
+  ruleGroup?: string | null;
   budgetId: number | null;
   loanId: number | null;
   /** Step says "ignore these" rather than routing them somewhere. */
   exclude?: boolean;
 };
+
+/**
+ * What makes two rows the same rule.
+ *
+ * A generated group id when there is one, and the match itself otherwise, which is
+ * what a rule was before it could have alternatives. Both spellings have to work:
+ * the migration groups every existing rule, but a row inserted by any path that
+ * forgets the column would otherwise read as its own single-value rule and quietly
+ * duplicate the rule it belongs to.
+ *
+ * The match is included even for a grouped row, so a row cannot join a group
+ * belonging to a different kind of match.
+ */
+export function ruleKey(
+  rule: Pick<StoredRule, "matchType" | "matchValue" | "ruleGroup">,
+): string {
+  return rule.ruleGroup
+    ? `group:${rule.matchType}:${rule.ruleGroup}`
+    : `match:${rule.matchType}:${rule.matchValue}`;
+}
 
 export type RuleTargetKind = "bucket" | "loan" | "ignore";
 
@@ -93,43 +126,68 @@ export function actionOf(rule: StoredRule): RuleAction {
 /**
  * A rule as the user thinks of it: one match, any number of steps.
  *
- * `id` is the lowest row id under the match. It is a handle, not a pointer to
- * one step - deleting or re-applying by it means "the whole rule".
+ * `id` is the lowest row id under the rule. It is a handle, not a pointer to one
+ * step - deleting or re-applying by it means "the whole rule".
+ *
+ * `matchValues` is a list because a rule can name several alternatives and mean
+ * one of them. A single-value rule has a one-entry list rather than a nullable
+ * field, so nothing downstream has a two-armed case for "is this the simple kind".
  */
 export type RuleGroup = {
   id: number;
+  /** The identity rows share, or null for a rule that predates the column. */
+  ruleGroup: string | null;
   matchType: StoredRule["matchType"];
-  matchValue: string;
+  /** Alternatives, OR'd together. Never empty. */
+  matchValues: string[];
   steps: RuleAction[];
 };
 
 /**
- * Collapse one-row-per-step rows into one entry per rule.
+ * Collapse one-row-per-(step, value) rows into one entry per rule.
  *
  * Preserves the order rows arrive in, which is the table's priority order, so a
- * rule's steps list in the order they were first added and rules stay in the
- * order they should be evaluated.
+ * rule's steps list in the order they were first added and rules stay in the order
+ * they should be evaluated.
+ *
+ * Both the values and the steps are de-duplicated, because a rule with two values
+ * and two steps is four rows describing two of each. Steps keep their first
+ * appearance rather than their last: rows arrive ordered by step order, so the
+ * first sighting of each is its position in the list the user arranged.
  */
 export function groupRuleRows(rows: StoredRule[]): RuleGroup[] {
   const groups: RuleGroup[] = [];
-  const byMatch = new Map<string, RuleGroup>();
+  const byKey = new Map<string, RuleGroup>();
+  const stepSeen = new Map<string, Set<string>>();
 
   for (const row of rows) {
-    const key = `${row.matchType}:${row.matchValue}`;
-    const existing = byMatch.get(key);
-    if (existing) {
-      existing.steps.push(actionOf(row));
-      if (row.id < existing.id) existing.id = row.id;
-      continue;
+    const key = ruleKey(row);
+    const action = actionOf(row);
+    const actionId = actionKey(action);
+
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        id: row.id,
+        ruleGroup: row.ruleGroup ?? null,
+        matchType: row.matchType,
+        matchValues: [],
+        steps: [],
+      };
+      byKey.set(key, group);
+      stepSeen.set(key, new Set());
+      groups.push(group);
     }
-    const group: RuleGroup = {
-      id: row.id,
-      matchType: row.matchType,
-      matchValue: row.matchValue,
-      steps: [actionOf(row)],
-    };
-    byMatch.set(key, group);
-    groups.push(group);
+
+    if (row.id < group.id) group.id = row.id;
+    if (!group.matchValues.includes(row.matchValue)) {
+      group.matchValues.push(row.matchValue);
+    }
+    const seen = stepSeen.get(key)!;
+    if (!seen.has(actionId)) {
+      seen.add(actionId);
+      group.steps.push(action);
+    }
   }
 
   return groups;
@@ -478,10 +536,16 @@ async function applyExclusions(ids: number[]): Promise<void> {
 /**
  * Run every step of one rule, in step order.
  *
- * Returns one result per step rather than a single number, because a rule with
- * a loan step and a bucket step moved two different things and reporting one
- * total would hide that. The two also overlap legitimately: the same
- * transaction can be a loan payment and sit in a spending bucket at once.
+ * One result per row, which is one per (value, step) pair rather than one per step.
+ * A rule with two alternatives reports its step twice, because that is what it did:
+ * the two passes reach different transactions. The numbers still add up per target,
+ * and a transaction matching both alternatives is counted as matched by both and
+ * moved by whichever ran first.
+ *
+ * Returning one number for the rule would hide the other case: a loan step and a
+ * bucket step moved two different things, and reporting one total would collapse
+ * that. The two also overlap legitimately — the same transaction can be a loan
+ * payment and sit in a spending bucket at once.
  */
 export async function applyRulesToHistory(
   userId: string,
@@ -531,11 +595,18 @@ export async function applyRulesToHistory(
  * rows, and those rows are what moved the debt balance. If the step vanishes and
  * the payments stayed, the rule would be lying about what it does.
  *
+ * The same is true of removing a *value* rather than a step: dropping "UAS" from a
+ * two-value rule has to un-claim the transactions only "UAS" found, even though
+ * the rule and its steps both survive. That is what the candidate values below are
+ * for - they are every value whose writes may need undoing, surviving or not.
+ *
  * The catch is that a write is rarely the step's alone. Two steps can reach the
  * same transaction, and a payment can be tagged by hand on the transactions
  * page, and `excluded` is also set by the routing engine for card payments. So
  * every write is checked against everything that still wants it, and anything
- * still claimed is left alone and counted in `kept`.
+ * still claimed is left alone and counted in `kept`. That check is also what keeps
+ * a wider candidate set honest: a transaction a surviving alternative still matches
+ * is claimed by a row that is still there, so it is kept.
  *
  * Must run AFTER the rule has been saved, so "still claimed" reads the rules as
  * they now stand, and BEFORE the remaining steps are re-applied, so their writes
@@ -543,7 +614,16 @@ export async function applyRulesToHistory(
  */
 export async function revertRuleSteps(
   userId: string,
-  match: { matchType: StoredRule["matchType"]; matchValue: string },
+  match: {
+    matchType: StoredRule["matchType"];
+    /**
+     * Every value whose writes might need undoing: the rule's surviving ones, plus
+     * any alternative this save just dropped. A transaction still claimed by a
+     * surviving value is left alone by the claimant check below, so passing both is
+     * safe and passing only the survivors would silently leak the dropped ones.
+     */
+    matchValues: readonly string[];
+  },
   removed: RuleAction[],
 ): Promise<RevertResult[]> {
   if (removed.length === 0) return [];
@@ -560,20 +640,31 @@ export async function revertRuleSteps(
     }),
   ]);
 
-  const matcher: StoredRule = {
-    id: 0,
-    matchType: match.matchType,
-    matchValue: match.matchValue,
-    budgetId: null,
-    loanId: null,
-  };
+  /*
+   * One matcher per value rather than one matcher with the values joined, because
+   * "600 or 700" is not a substring: joining them would look for a merchant
+   * literally containing both.
+   */
+  const matchers = match.matchValues.map(
+    (value): StoredRule => ({
+      id: 0,
+      matchType: match.matchType,
+      matchValue: value,
+      ruleGroup: null,
+      budgetId: null,
+      loanId: null,
+    }),
+  );
 
   const accountTypes =
     removed.some((action) => action.target === "ignore")
       ? await loadAccountTypes(userId)
       : new Map<string, string>();
 
-  const matching = rows.filter((row) => matchesStoredRule(row, matcher));
+  // A row matching any alternative is in scope: the rule is "one of these".
+  const matching = rows.filter((row) =>
+    matchers.some((matcher) => matchesStoredRule(row, matcher)),
+  );
 
   /**
    * Surviving steps pointed at the same target, which is the only ones that can

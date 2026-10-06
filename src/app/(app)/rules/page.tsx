@@ -44,15 +44,18 @@ export default async function RulesPage() {
   const loanNameById = new Map(loans.map((l) => [l.id, l.name]));
 
   /*
-   * One row is one step, so the rows have to be collapsed back into rules before
-   * display - otherwise "amount 453.91 pays the loan" and "amount 453.91 goes to
-   * Car Payment" render as two separate rules, which is the thing this page is
-   * meant to stop doing.
+   * One row is one (step, value) pair, so the rows have to be collapsed back into
+   * rules before display - otherwise "amount 453.91 pays the loan" and "amount
+   * 453.91 goes to Car Payment" render as two separate rules, which is the thing
+   * this page is meant to stop doing. The same collapse is what turns a rule with
+   * two match values back into one line reading "UAS or US Department of
+   * Education".
    */
   const rules: Rule[] = groupRuleRows(rows).map((group) => ({
     id: group.id,
+    ruleGroup: group.ruleGroup,
     matchType: group.matchType,
-    matchValue: group.matchValue,
+    matchValues: group.matchValues,
     steps: group.steps.map((step) => ({
       target: step.target,
       budgetId: step.budgetId,

@@ -98,6 +98,26 @@ export function isCatchAll(name: string): boolean {
   return /everything\s*else|^other$/i.test(name.trim());
 }
 
+/**
+ * The remainder bucket, as opposed to a bucket that merely happens to be called
+ * "Everything Else".
+ *
+ * Having no categories is half of it, and the half that matters: a remainder bucket
+ * means "spending nothing else claimed", so one that claims a category is not a
+ * remainder bucket at all - it is a real bucket with a confusing name, and it
+ * competes with the bucket that owns those transactions.
+ *
+ * Callers that need a name *and* a kind check still apply their own kind filter:
+ * an earnings bucket called "Other Income" matches `isCatchAll` but is money in,
+ * not a remainder.
+ */
+export function isRemainderBucket(
+  name: string,
+  categories: readonly string[],
+): boolean {
+  return categories.length === 0 && isCatchAll(name);
+}
+
 /** Turn "FOOD_AND_DRINK_GROCERIES" into "Food and Drink Groceries". */
 export function humanizeCategory(category: string): string {
   return category

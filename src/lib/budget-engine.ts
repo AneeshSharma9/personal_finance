@@ -3,7 +3,7 @@ import "server-only";
 import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
-import { categoryCandidates, isCatchAll, isEarningCategory } from "@/lib/categories";
+import { categoryCandidates, isEarningCategory, isRemainderBucket } from "@/lib/categories";
 
 /**
  * Automatic routing of transactions into budget buckets.
@@ -122,8 +122,8 @@ export function bucketCategoryRules(
    * bucket and take that bucket's transactions, which is the opposite of what a
    * remainder bucket is for.
    */
-  const catchAll = spending.find(
-    (budget) => budget.categories.length === 0 && isCatchAll(budget.name),
+  const catchAll = spending.find((budget) =>
+    isRemainderBucket(budget.name, budget.categories),
   );
 
   return { bucketCategories, catchAllBudgetId: catchAll?.id ?? null };

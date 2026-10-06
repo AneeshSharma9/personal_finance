@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
+import { budgetedTotal } from "@/lib/budget-remainder";
 import { monthRange } from "@/lib/format";
 import {
   getBudgetSummary,
@@ -74,12 +75,20 @@ export default async function BudgetsPage({
     getYearRange(user.id),
   ]);
 
+  /*
+   * The remainder bucket's Budgeted figure is the budgeted income less every other
+   * bucket, derived by lib/budget-remainder.ts rather than typed into the row. The
+   * rows come back from the query already carrying it, which is why every total
+   * below is computed from them directly: the Spending Budget footing the page now
+   * equals the budgeted income by construction, instead of by the user having got
+   * the arithmetic right on every row themselves.
+   */
   const basics = groups.basic;
   const spending = groups.category;
   const earnings = groups.earning;
 
-  const basicsBudgeted = sum(basics);
-  const categoriesBudgeted = sum(spending);
+  const basicsBudgeted = budgetedTotal(basics);
+  const categoriesBudgeted = budgetedTotal(spending);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -160,7 +169,7 @@ export default async function BudgetsPage({
           categoriesBudgeted,
           // Rocket Money's footer: every budgeted outflow, not one group.
           spendingBudget: basicsBudgeted + categoriesBudgeted,
-          earningsBudgeted: sum(earnings),
+          earningsBudgeted: budgetedTotal(earnings),
           basicsActual: sumActual(basics),
           categoriesActual: sumActual(spending),
           earningsActual: sumActual(earnings),
@@ -197,10 +206,6 @@ function buildYear(year: number): { year: number; month: number }[] {
   }));
 }
 
-
-function sum(rows: { budgeted: number }[]): number {
-  return rows.reduce((total, row) => total + row.budgeted, 0);
-}
 
 function sumActual(rows: { actual: number }[]): number {
   return rows.reduce((total, row) => total + row.actual, 0);

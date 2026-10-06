@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 
 import { requireUser } from "@/lib/auth";
-import { getBudgets, getCategoryOptions, getLatestTransactionMonth } from "@/lib/queries";
+import { displayLimit, planFrom } from "@/lib/budget-remainder";
+import {
+  getBudgets,
+  getCategoryOptions,
+  getLatestTransactionMonth,
+  toRemainderInput,
+} from "@/lib/queries";
 import { BackLink } from "@/components/back-link";
 import {
   BucketManager,
@@ -45,13 +51,25 @@ export default async function BucketsPage({
   ]);
 
   const groups: BucketGroups = { basic: [], category: [], earning: [] };
+
+  /*
+   * The remainder bucket's amount is derived, not stored, so reading
+   * `monthlyLimit` straight off each row would show a stale figure here and a
+   * current one on the budgets page — one click apart. See
+   * lib/budget-remainder.ts.
+   */
+  const plan = planFrom(buckets.map(toRemainderInput));
+
   for (const bucket of buckets) {
     groups[bucket.budgetKind].push({
       id: bucket.id,
       kind: bucket.budgetKind,
       name: bucket.name,
       categories: bucket.categories,
-      budgeted: Number(bucket.monthlyLimit),
+      budgeted: displayLimit(plan, {
+        id: bucket.id,
+        budgeted: Number(bucket.monthlyLimit),
+      }),
     });
   }
 

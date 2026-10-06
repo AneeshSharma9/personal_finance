@@ -11,6 +11,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -473,8 +474,27 @@ export const budgetRules = pgTable(
      * category, matched with prefix semantics. For `amount`: the figure as a
      * decimal string, compared numerically against abs(amount) rather than as
      * text, so "600" and "600.00" are the same rule.
+     *
+     * One value per row, not one per rule: `rule_group` below is what ties the
+     * rows together, which is what lets a rule say "UAS *or* US Department of
+     * Education" while every row still matches exactly one thing and does exactly
+     * one thing.
      */
     matchValue: text("match_value").notNull(),
+    /**
+     * Rows sharing this are one rule, however many match values it has.
+     *
+     * A rule used to be identified by (match_type, match_value), which cannot
+     * express alternatives: two values with the same steps were two unrelated
+     * rules, so "UAS or US Department of Education goes to Student Loans" meant
+     * writing the step out twice and editing it twice. Identity has to be
+     * something the user does not type, so it is generated here instead.
+     *
+     * Nullable, and rows without it group by (match_type, match_value) as they
+     * always did - so a row from before the column existed still reads as the
+     * rule it was, rather than as its own one-row rule.
+     */
+    ruleGroup: uuid("rule_group"),
     /** Lower runs first. Ties are broken by id so evaluation is deterministic. */
     priority: integer("priority").notNull().default(0),
     /**
@@ -521,6 +541,9 @@ export const budgetRules = pgTable(
       t.matchType,
       t.matchValue,
     ),
+    // How a rule's rows are fetched now that it can have several match values:
+    // every read of "all the rows of this rule" goes through the group.
+    index("budget_rules_user_group_idx").on(t.userId, t.ruleGroup),
     index("budget_rules_user_budget_idx").on(t.userId, t.budgetId),
     index("budget_rules_user_loan_idx").on(t.userId, t.loanId),
     index("budget_rules_user_priority_idx").on(t.userId, t.priority),
