@@ -120,6 +120,13 @@
       "when": 1791316060739,
       "tag": "0016_enable_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791316061739,
+      "tag": "0017_pin_loan_trigger_search_path",
+      "breakpoints": true
     }
   ]
 }
