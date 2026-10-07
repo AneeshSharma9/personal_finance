@@ -10,7 +10,7 @@ import { requireUserId } from "@/lib/auth";
  *
  * Unlinking is irreversible, and Plaid makes it doubly so: `/item/remove`
  * revokes the Item at Plaid but does NOT return the slot to the Trial plan's
- * 10-Item allowance (PLANNED_ARCHITECTURE.md section 2). The UI has to say that
+ * 10-Item allowance (docs/architecture.md section 2). The UI has to say that
  * before the user clicks, not after.
  */
 export async function GET(

@@ -5,7 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { plaidEnv } from "@/lib/env";
 
 /**
- * Plaid webhook signature verification (PLANNED_ARCHITECTURE.md 5.3).
+ * Plaid webhook signature verification (docs/architecture.md 5.3).
  *
  * Plaid sends a JWT in the `Plaid-Verification` header containing a JWK that
  * carries Plaid's public key. Verifying it proves the webhook really came from

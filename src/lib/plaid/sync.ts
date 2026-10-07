@@ -74,7 +74,7 @@ export type SyncResult = {
 /**
  * Full sync of one Item: accounts, then transactions via /transactions/sync.
  *
- * Cursor discipline (PLANNED_ARCHITECTURE.md 5.2): we loop while has_more and
+ * Cursor discipline (docs/architecture.md 5.2): we loop while has_more and
  * only persist next_cursor AFTER the batch is written. Writing the cursor
  * first would silently skip rows whose insert failed.
  */
@@ -319,7 +319,7 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * Pending transactions come back later as `modified` under the same
  * transaction_id once they post, so the unique constraint plus upsert handles
  * the pending -> posted transition without us matching them by hand
- * (PLANNED_ARCHITECTURE.md section 6).
+ * (docs/architecture.md section 6).
  */
 async function upsertTransactions(
   tx: Tx,

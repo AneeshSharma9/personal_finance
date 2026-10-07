@@ -16,7 +16,7 @@ import {
 import { decryptToken } from "@/lib/crypto";
 
 /**
- * Plaid webhook receiver (PLANNED_ARCHITECTURE.md 5.3).
+ * Plaid webhook receiver (docs/architecture.md 5.3).
  *
  * Plaid POSTs here. We verify the signature before trusting anything, then act
  * on the two webhook families we care about:

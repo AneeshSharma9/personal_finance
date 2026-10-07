@@ -1608,7 +1608,7 @@ export type NetWorthBreakdown = {
 /**
  * Compute current net worth.
  *
- * Sign handling (PLANNED_ARCHITECTURE.md 5.6): Plaid reports credit and loan
+ * Sign handling (docs/architecture.md 5.6): Plaid reports credit and loan
  * balances as positive amounts owed, so those get negated here. Investment
  * accounts are valued from HOLDINGS, not from `current_balance`, because a
  * brokerage's cash sweep can appear in both and would double count.

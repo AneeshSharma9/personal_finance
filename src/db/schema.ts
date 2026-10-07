@@ -46,7 +46,7 @@ export const itemStatus = pgEnum("item_status", [
 /**
  * Plaid account.type. `investment` accounts are de-emphasised: for those we
  * read value from holdings, not from `current_balance`, to avoid double
- * counting the brokerage cash sweep (PLANNED_ARCHITECTURE.md 5.6).
+ * counting the brokerage cash sweep (docs/architecture.md 5.6).
  */
 export const accountType = pgEnum("account_type", [
   "depository",
@@ -213,7 +213,7 @@ export const accounts = pgTable(
     type: accountType("type").notNull(),
     subtype: accountSubtype("subtype"),
     /**
-     * Sign convention (PLANNED_ARCHITECTURE.md 6): Plaid reports debt balances
+     * Sign convention (docs/architecture.md 6): Plaid reports debt balances
      * as positive amounts owed. We keep the raw Plaid sign for `credit` and
      * `loan` accounts and derive net-worth signs at read time, so we never
      * have to guess which way a stored number points.
@@ -329,7 +329,7 @@ export const transactions = pgTable(
     plaidTransactionId: text("plaid_transaction_id").notNull(),
     /**
      * Plaid signs are positive for money OUT and negative for money IN
-     * (PLANNED_ARCHITECTURE.md 6). We store Plaid's sign verbatim so the column
+     * (docs/architecture.md 6). We store Plaid's sign verbatim so the column
      * always matches what Plaid returns; UI converts for display.
      */
     amount: numeric("amount", { precision: 18, scale: 4 }).notNull(),

@@ -36,7 +36,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // Large tap targets on iPhone (see PLANNED_ARCHITECTURE.md section 9).
+  // Large tap targets on iPhone (see docs/architecture.md section 9).
   maximumScale: 5,
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },

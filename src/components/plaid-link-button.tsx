@@ -18,7 +18,7 @@ type LinkState =
 /**
  * Plaid Link button.
  *
- * Flow (PLANNED_ARCHITECTURE.md 5.1):
+ * Flow (docs/architecture.md 5.1):
  *   1. POST /api/plaid/link-token  -> a Link token
  *   2. Open Plaid Link with that token
  *   3. On success Link hands back a public_token

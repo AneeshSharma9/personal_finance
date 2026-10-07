@@ -12,7 +12,7 @@ import { syncItem, refreshAllForItem } from "@/lib/plaid/sync-items";
 /**
  * Exchange a Link `public_token` for a durable access token and store the Item.
  *
- * This is the step that consumes a Plaid Item slot (PLANNED_ARCHITECTURE.md 5.1),
+ * This is the step that consumes a Plaid Item slot (docs/architecture.md 5.1),
  * so it must be robust: a dropped response after exchange would leave the Item
  * created in Plaid but missing here, and the user would have no way to recover
  * the token. We therefore persist the token before doing anything else and make

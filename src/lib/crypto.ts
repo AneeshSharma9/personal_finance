@@ -17,7 +17,7 @@ import { tokenEncryptionKey } from "@/lib/env";
  *
  * Losing or rotating TOKEN_ENCRYPTION_KEY makes every stored token
  * undecryptable, which means losing every linked Item and its Trial-plan slot
- * (PLANNED_ARCHITECTURE.md section 2). Back it up.
+ * (docs/architecture.md section 2). Back it up.
  *
  * Ciphertext layout, all base64url so it survives JSON and headers:
  *   [ 12-byte IV | 16-byte GCM auth tag | ciphertext ]

@@ -20,7 +20,7 @@ import {
 /**
  * Create a Link token.
  *
- * Two modes (PLANNED_ARCHITECTURE.md 5.1 and 5.4):
+ * Two modes (docs/architecture.md 5.1 and 5.4):
  *  - new: no `itemId`. Consumes a Trial-plan slot, so this is the expensive path.
  *  - update: `accessToken` for an existing Item whose login has expired. Free,
  *    so re-auth MUST go through this path rather than creating a new Item.
@@ -150,7 +150,7 @@ async function updateModeLinkToken(
 
 /**
  * Exchange a Link `public_token` for a durable `access_token` and store the
- * Item (PLANNED_ARCHITECTURE.md 5.1, step 5-6).
+ * Item (docs/architecture.md 5.1, step 5-6).
  *
  * Returns the new Item id. Persisting the access token is the load-bearing
  * step: lose it and the Item - plus its Trial slot - is gone.

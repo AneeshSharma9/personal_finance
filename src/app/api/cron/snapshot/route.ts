@@ -19,7 +19,7 @@ import { runSteps, type StepResult } from "@/lib/run-steps";
  * has to open the app or press Refresh to keep it honest.
  *
  * Plaid reports CURRENT balances only, so both histories exist only for days we
- * recorded. There is no backfill. Start this early (PLANNED_ARCHITECTURE.md 5.6).
+ * recorded. There is no backfill. Start this early (docs/architecture.md 5.6).
  *
  * Loans are absent on purpose. The `loan_payments` trigger only does
  * `balance -= principal` on insert, so a loan's balance on any past day is

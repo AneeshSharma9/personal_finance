@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
 /**
- * PWA manifest (PLANNED_ARCHITECTURE.md section 9).
+ * PWA manifest (docs/architecture.md section 9).
  *
  * `display: "standalone"` is what makes the home-screen icon launch without
  * Safari chrome, so it behaves like a native app.
