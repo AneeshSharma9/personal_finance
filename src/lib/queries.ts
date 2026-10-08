@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
+import type { AccountChangeRow } from "@/lib/change-period";
 import { isRemainderBucket } from "@/lib/categories";
 import {
   applyRemainderBucket,
@@ -1719,27 +1720,34 @@ export type NetWorthPoint = {
  *
  * Plaid gives current balances only, so history exists only for days we
  * actually recorded. Start the cron early - there is no backfill.
+ *
+ * `from` is the inclusive earliest date to return (YYYY-MM-DD); omitted means
+ * every snapshot on record. A **date** rather than a count of readings, unlike
+ * `getAccountBalanceHistory` below: the period selector's labels are in days, and
+ * thirty rows is thirty days only while the cron runs every day. The moment it
+ * misses one, a count quietly covers longer than its label says while a date
+ * keeps its meaning and simply returns fewer points.
+ *
+ * Ascending with no limit, so the date bound is the only thing shaping the
+ * window. The descending-limit-then-reverse dance this replaced was there to stop
+ * `limit: 365` returning the *oldest* 365 rows; with a floor on the date there is
+ * nothing for it to pin.
  */
 export async function getNetWorthHistory(
   userId: string,
-  days = 365,
+  from?: string,
 ): Promise<NetWorthPoint[]> {
   const rows = await db.query.netWorthSnapshots.findMany({
-    where: eq(tables.netWorthSnapshots.userId, userId),
-    /*
-     * Newest first for the LIMIT, then flipped below.
-     *
-     * Ascending order with `limit: days` returns the OLDEST 365 rows, so once a
-     * year of daily snapshots existed the chart would be pinned to the first
-     * year forever and stop advancing - the exact opposite of what a history is
-     * for. Ordering descending and reversing afterwards keeps the chart's
-     * chronological order while making the window mean "the last N days".
-     */
-    orderBy: (s, { desc }) => [desc(s.snapshotDate)],
-    limit: days,
+    where: from
+      ? and(
+          eq(tables.netWorthSnapshots.userId, userId),
+          gte(tables.netWorthSnapshots.snapshotDate, from),
+        )
+      : eq(tables.netWorthSnapshots.userId, userId),
+    orderBy: (s, { asc }) => [asc(s.snapshotDate)],
   });
 
-  return rows.reverse().map((r) => ({
+  return rows.map((r) => ({
     date: r.snapshotDate,
     assets: toNumber(r.assetsTotal),
     liabilities: toNumber(r.liabilitiesTotal),
@@ -1780,9 +1788,14 @@ export async function getAccountForUser(
 /**
  * An account's recorded balance on each day the cron ran.
  *
+ * `days` is a **count of readings**, not a date range, and that is deliberate
+ * here: this page has no period selector, so "the last 365 readings" is the whole
+ * ask and there is no label to contradict. The sibling `getNetWorthHistory` takes
+ * a date instead, because it backs a selector whose labels are in days.
+ *
  * Descending for the LIMIT then reversed, so the window means "the last N days"
- * rather than pinning the chart to the oldest ones - see getNetWorthHistory for
- * the same trap on the aggregate.
+ * rather than pinning the chart to the oldest ones - see getNetWorthHistory's
+ * former implementation for the same trap on the aggregate.
  *
  * Empty for a while after a deployment, and there is nothing to backfill: Plaid
  * reports current balances only.
@@ -1804,6 +1817,121 @@ export async function getAccountBalanceHistory(
   return rows.reverse().map((row) => ({
     date: row.snapshotDate,
     value: toNumber(row.balance),
+  }));
+}
+
+/**
+ * Every account's latest recorded balance and the readings a change could be
+ * measured against.
+ *
+ * This is the query behind the per-account breakdown under the net worth chart,
+ * and it exists because summing the balances themselves says nothing about how
+ * they got here: a net worth figure that moved $400 overnight is four accounts
+ * and a rounding error, and only naming them makes that visible.
+ *
+ * Three readings per account, each found by a `LEFT JOIN LATERAL` over the
+ * `account_balance_snapshots` unique index `(account_id, snapshot_date)`, so the
+ * whole breakdown is one query and three index probes per account - rather than
+ * pulling a year of daily rows per account and reducing them in JS.
+ *
+ * `from` is the inclusive lower bound of the window; pass `BEGINNING_OF_TIME`
+ * for the whole record. Anchored to the calendar rather than to the newest
+ * snapshot on purpose: a window anchored to a stale reading quietly narrows
+ * itself, so with the last snapshot three days old a "30 days" window covers 27.
+ *
+ * Accounts with no snapshots yet come back with null readings rather than being
+ * dropped, because the list is the account list - omitting the account you just
+ * linked would read as "this account is not tracked".
+ *
+ * Scoped through `items.user_id` rather than an account-id list, for the same
+ * reason `getAccountForUser` is: a caller that passes someone else's id gets no
+ * rows rather than their data.
+ */
+export async function getAccountChanges(
+  userId: string,
+  from: string,
+): Promise<AccountChangeRow[]> {
+  const rows = await db.execute<{
+    id: number;
+    name: string;
+    mask: string | null;
+    type: string;
+    institution_name: string | null;
+    latest_date: string | null;
+    latest_balance: string | null;
+    previous_date: string | null;
+    previous_balance: string | null;
+    window_date: string | null;
+    window_balance: string | null;
+  }>(sql`
+    select
+      a.id,
+      a.name,
+      a.mask,
+      a.type,
+      i.institution_name,
+      latest.snapshot_date::text as latest_date,
+      latest.balance::text       as latest_balance,
+      prior.snapshot_date::text  as previous_date,
+      prior.balance::text        as previous_balance,
+      oldest.snapshot_date::text as window_date,
+      oldest.balance::text       as window_balance
+    from accounts a
+    join items i on i.id = a.item_id
+    left join lateral (
+      select s.snapshot_date, s.balance
+      from account_balance_snapshots s
+      where s.account_id = a.id
+      order by s.snapshot_date desc
+      limit 1
+    ) latest on true
+    left join lateral (
+      /*
+        The reading before the newest one. Compared on the date rather than with
+        an offset, so it still behaves when "latest" is null: an account with no
+        snapshots at all gets no previous reading either, which is right rather
+        than an error.
+      */
+      select s.snapshot_date, s.balance
+      from account_balance_snapshots s
+      where s.account_id = a.id and s.snapshot_date < latest.snapshot_date
+      order by s.snapshot_date desc
+      limit 1
+    ) prior on true
+    left join lateral (
+      /*
+        Named "oldest" rather than "window", which is a reserved word in SQL and
+        fails the whole query - the kind of thing that only shows up the first
+        time the query runs against a database.
+      */
+      select s.snapshot_date, s.balance
+      from account_balance_snapshots s
+      where s.account_id = a.id and s.snapshot_date >= ${from}
+      order by s.snapshot_date asc
+      limit 1
+    ) oldest on true
+    where i.user_id = ${userId}
+    order by a.type, a.name
+  `);
+
+  return rows.map((row) => ({
+    accountId: Number(row.id),
+    name: row.name,
+    institutionName: row.institution_name,
+    mask: row.mask,
+    type: row.type,
+    latest:
+      row.latest_date === null
+        ? null
+        : { date: row.latest_date, value: toNumber(row.latest_balance) },
+    previous:
+      row.previous_date === null
+        ? null
+        : { date: row.previous_date, value: toNumber(row.previous_balance) },
+    windowStart:
+      row.window_date === null
+        ? null
+        : { date: row.window_date, value: toNumber(row.window_balance) },
   }));
 }
 

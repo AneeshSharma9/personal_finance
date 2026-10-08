@@ -23,6 +23,35 @@ is why the buttons are on the detail pages and not on the list.
 **Add a loan** stays on `/accounts`, because creating is a list-level action and
 has nowhere else to belong.
 
+## Change by account
+
+A **Change by account** section sits between the account lists and the Totals
+card: every account's recorded balance and how far it has moved, over a period you
+choose. The period is `?change=`, defaulting to **All time**.
+
+Plain links, no client state, for the same reason the month strip and the cash
+flow scope are URL-driven: the server already knows the answer, and the choice is
+one worth being able to share — "did you mean 30 days or all time" is a real
+disagreement about a number.
+
+It offers the same periods as `/net-worth`, because there is one list. The
+day-over-day option is worth having here most of all: on a page with no chart,
+"which account moved since yesterday, and by how much" is the question the list is
+usually opened to answer.
+
+It defaults to **all time** rather than to something short, which is the reverse
+of the dashboard, and the reason is that the two pages are answering different
+questions. The dashboard opens on every visit and asks what happened; here you
+arrive already curious about a window, so choosing one is deliberate and defaulting
+away from the whole record would answer a question nobody asked.
+
+The balances shown are the nightly job's **recorded** ones rather than Plaid's
+live `current_balance`, and the section says so. That is also why the section
+exists *next to* the lists rather than inside them: the lists above show live
+balances, this shows recorded ones with the movement between them, and putting
+them side by side without saying so reads as a disagreement rather than a
+difference of basis.
+
 ## Holdings, two presentations
 
 `HoldingsList` is the multi-account version for `/net-worth`: it groups positions

@@ -7,6 +7,7 @@ import { DONUT_COLOURS, Donut } from "@/components/donut";
 import { SyncStatus } from "@/components/sync-status";
 import { TrendChart } from "@/components/trend-chart";
 import { SyncButton } from "@/components/sync-button";
+import { DEFAULT_HISTORY_DAYS, daysAgo } from "@/lib/change-period";
 import { formatCurrency, formatPercent, monthRange } from "@/lib/format";
 import { payoffProgress } from "@/lib/loan-math";
 import {
@@ -60,7 +61,9 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     getItems(user.id),
     getNetWorth(user.id),
-    getNetWorthHistory(user.id),
+    // A year of readings, as a date. The dashboard has no period selector, so this
+    // is the window rather than a default for one - see DEFAULT_HISTORY_DAYS.
+    getNetWorthHistory(user.id, daysAgo(DEFAULT_HISTORY_DAYS)),
     getBudgetSummary(user.id, from, to),
     getSpendSummary(user.id, from, to),
     getBudgetsWithActuals(user.id, from, to),
@@ -158,9 +161,17 @@ export default async function DashboardPage() {
       ) : (
         <>
           {/*
-            Net worth is the headline, with the trend under it. The change is
-            measured from the oldest snapshot on record, which is the same basis
-            the chart's footer uses, so the two always agree.
+            Net worth is the headline, with the trend under it. The change under
+            the chart is measured from the reading before the newest one, not from
+            the oldest one on record: on the dashboard the figure is read as "what
+            happened", and a number spanning however long this database happens to
+            be old was being read as "today".
+
+            There is no per-account breakdown here. It moved to /net-worth, which
+            is where the period selector lives - a per-account figure measured
+            across a different window than the chart above it is worse than not
+            showing one at all, so it went where the window can be chosen rather
+            than hardcoded to this page's basis.
           */}
           <section className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
             <header className="flex flex-wrap items-baseline justify-between gap-2">
@@ -201,6 +212,7 @@ export default async function DashboardPage() {
                   value: point.netWorth,
                 }))}
                 label="Net worth"
+                changeBasis="day"
               />
             </div>
           </section>

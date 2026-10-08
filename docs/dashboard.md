@@ -6,6 +6,16 @@ accounts — that is `/accounts`, and duplicating it pushed the month's numbers 
 the screen.
 
 - **Net worth**, with the trend under it (`TrendChart` over the daily snapshots).
+  The change under the chart is measured from the reading before the newest one,
+  not from the oldest one on record; see
+  [Net worth](net-worth.md#a-change-is-measured-against-a-reading-not-a-date).
+
+  There is **no per-account breakdown here** — it moved to `/net-worth`, which is
+  where the period selector lives. A per-account figure measured across a different
+  window than the chart above it is worse than showing none, so it went where the
+  window can be chosen rather than hardcoded to this page's basis. This chart is
+  itself capped at a year (`DEFAULT_HISTORY_DAYS`), which is another reason the
+  two do not belong together.
 - **The month's position** — reuses `BudgetSummary`, the budgets page's own card,
   so the two cannot drift apart. Leftover, spending budget, spending, income.
   With a link to the unassigned queue when anything is unrouted.
@@ -30,6 +40,12 @@ in the heading, because "the month" is ambiguous once that is true.
 **Cash flow and Spending Budget will not tie, on purpose.** Cash flow counts every
 transaction; the budget summary counts only money in a bucket. Different questions,
 so they are labelled differently rather than quietly reconciled into one number.
+
+**The page does not list accounts.** The lists exist so you can *act* — open one,
+remove one, see its transactions — and duplicating them pushed the month's numbers
+off the screen. "Which account did it" is a different question, but it is a
+question about a *window*, and the dashboard hardcodes one (the reading before the
+newest), so it lives on `/net-worth` where the window is a choice.
 
 ## Which chart, and why
 

@@ -31,7 +31,7 @@ the signed-in user's id.
 | Auth | Supabase Auth, locked to an email allowlist |
 | Plaid | `plaid` Node SDK + `react-plaid-link` |
 | Charts | `visx` (scales, shapes, axes, sankey, tooltip) |
-| Tests | `node:test` via `tsx` (361 tests) |
+| Tests | `node:test` via `tsx` (398 tests) |
 
 ## Setup
 
@@ -222,7 +222,7 @@ src/
     api/            route handlers: plaid, items, sync, transactions,
                     budgets, buckets, rules, loans, worksheet, cron, health
     login/          sign-in page
-  components/       client components, one per feature area
+  components/       one component per feature area; mostly Server Components
   db/
     schema.ts       every table, column, index and constraint
     index.ts        the Drizzle client
@@ -252,7 +252,7 @@ Two conventions worth knowing before you read the code:
 ## Development
 
 ```bash
-npm test          # 361 tests, no database required
+npm test          # 398 tests, no database required
 npm run typecheck
 npm run lint
 ```

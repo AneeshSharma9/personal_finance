@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
 
 import { requireUser } from "@/lib/auth";
+import {
+  BEGINNING_OF_TIME,
+  CHANGE_PERIODS_WITH_WINDOW,
+  changePeriodWindow,
+  parseChartPeriod,
+  resolveAccountChange,
+} from "@/lib/change-period";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
+  getAccountChanges,
   getAccounts,
   getHoldings,
   getLiabilities,
@@ -10,23 +18,65 @@ import {
   getNetWorth,
   getNetWorthHistory,
 } from "@/lib/queries";
+import { AccountChangeList } from "@/components/account-change-list";
+import { ChangePeriodPicker } from "@/components/change-period";
 import { HoldingsList } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
 
 export const metadata: Metadata = { title: "Net worth · Finance" };
 
-export default async function NetWorthPage() {
+/**
+ * The net-worth total, its history, and what it is made of.
+ *
+ * The period selector moves the chart's window *and* the basis of the change
+ * under it, because a period control that left the chart alone would be asking
+ * the user to believe two different things at once. It is `?change=`, so a
+ * particular window is a link rather than a piece of state.
+ *
+ * "Previous day" is deliberately absent. A one-day window is a single reading, and
+ * the change it exists to show is measured against a day outside that window - so
+ * honouring it here would show a graph and a figure describing different spans.
+ * The day-over-day read lives on the dashboard, where it is what you want.
+ */
+export default async function NetWorthPage({
+  searchParams,
+}: PageProps<"/net-worth">) {
   const user = await requireUser();
+  const params = await searchParams;
+  const period = parseChartPeriod(params.change);
 
-  const [netWorth, history, accounts, holdings, liabilities, manual] =
-    await Promise.all([
-      getNetWorth(user.id),
-      getNetWorthHistory(user.id),
-      getAccounts(user.id),
-      getHoldings(user.id),
-      getLiabilities(user.id),
-      getManualAccounts(user.id),
-    ]);
+  /*
+   * One bound for both the chart and the breakdown below it.
+   *
+   * They have to agree: a net worth line over 30 days beside a per-account list
+   * measured across a year reads as two accounts of the truth rather than one
+   * period, and the totals then visibly refuse to add up. `changePeriodWindow` is
+   * `undefined` for All time, which is exactly what the history query wants; the
+   * breakdown needs a real date, and `BEGINNING_OF_TIME` is its "no lower bound".
+   */
+  const windowFrom = changePeriodWindow(period);
+
+  const [
+    netWorth,
+    history,
+    accountChanges,
+    accounts,
+    holdings,
+    liabilities,
+    manual,
+  ] = await Promise.all([
+    getNetWorth(user.id),
+    /*
+     * The selected period bounds which points exist at all - the chart plots what
+     * is left, rather than plotting everything and labelling it.
+     */
+    getNetWorthHistory(user.id, windowFrom),
+    getAccountChanges(user.id, windowFrom ?? BEGINNING_OF_TIME),
+    getAccounts(user.id),
+    getHoldings(user.id),
+    getLiabilities(user.id),
+    getManualAccounts(user.id),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -45,7 +95,13 @@ export default async function NetWorthPage() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-medium text-neutral-500">History</h2>
+        <header className="mb-2 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-neutral-500">History</h2>
+          <ChangePeriodPicker
+            current={period}
+            periods={CHANGE_PERIODS_WITH_WINDOW}
+          />
+        </header>
         {history.length === 0 ? (
           <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700">
             History builds one point per day. Plaid only reports current
@@ -67,6 +123,7 @@ export default async function NetWorthPage() {
                 value: point.netWorth,
               }))}
               label="Net worth"
+              changeBasis={period.basis}
             />
             <p className="mt-2 text-xs text-neutral-500">
               {history.length === 1
@@ -77,6 +134,30 @@ export default async function NetWorthPage() {
             </p>
           </div>
         )}
+
+        {/*
+          The breakdown is here rather than on the dashboard because this is where
+          the period selector lives, and a per-account figure measured across a
+          different window than the chart above it is worse than not showing one at
+          all - the totals would visibly refuse to add up. One `?change=` drives
+          both, so they cannot drift apart.
+
+          Rows link to the accounts themselves: this page has no account list, so
+          the breakdown is the only route into one from here. On `/accounts` the
+          lists above already do that job and the rows there do not link.
+        */}
+        {accountChanges.length > 0 ? (
+          <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+            <h3 className="mb-2 text-sm font-medium text-neutral-500">
+              Which accounts moved
+            </h3>
+            <AccountChangeList
+              rows={accountChanges.map((row) =>
+                resolveAccountChange(row, period),
+              )}
+            />
+          </div>
+        ) : null}
       </section>
 
       <section>

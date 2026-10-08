@@ -10,7 +10,12 @@ import { TooltipWithBounds } from "@visx/tooltip";
 import { useId, useState } from "react";
 
 import { formatCurrency, formatDate } from "@/lib/format";
-import { nearestIndex, type SeriesPoint } from "@/lib/series";
+import {
+  nearestIndex,
+  seriesChangeAt,
+  type ChangeBasis,
+  type SeriesPoint,
+} from "@/lib/series";
 import { useMeasuredWidth } from "@/lib/use-measured-width";
 
 /**
@@ -24,10 +29,11 @@ import { useMeasuredWidth } from "@/lib/use-measured-width";
  * Built from visx's individual packages rather than the `visx` umbrella, so only
  * the scales, shapes, axes and tooltip this chart actually uses get pulled in.
  *
- * Draws from a SINGLE point as well as from many. A freshly deployed app has one
- * reading, and showing an empty box for a whole day reads as broken. One point
- * is plotted as a lone marker with no line or fill, because a line through one
- * point asserts a direction the data does not contain.
+ * Draws from TWO points as well as from many, which is the floor: a line through
+ * one point asserts a direction the data does not contain, and a change for a
+ * series with a single reading is not a change. Below two it renders a "No graph
+ * data available" panel instead - see the early return for why that replaced the
+ * lone marker it used to draw.
  *
  * Hover and keyboard both drive the same `activeIndex`, so the tooltip is
  * reachable without a mouse and there is only one code path to position it.
@@ -41,10 +47,25 @@ export function TrendChart({
    * balance; false for a credit card, where a higher balance is worse.
    */
   risingIsGood = true,
+  /**
+   * What the change figure under the chart is measured against.
+   *
+   * `period` (the default) measures from the oldest reading on record, which is
+   * the same basis as the chart's own window. `day` measures from the reading
+   * before the newest one, which is the only basis that means anything when the
+   * question is "what moved overnight" - the dashboard asks that on every visit.
+   *
+   * It moves the reported figure and the tooltip, but deliberately not the
+   * line's colour: a net-worth line painted red because one bad Tuesday landed
+   * would be alarming and wrong, so the stroke stays on the period basis. On the
+   * default basis the two are the same number anyway.
+   */
+  changeBasis = "period",
 }: {
   points: SeriesPoint[];
   label: string;
   risingIsGood?: boolean;
+  changeBasis?: ChangeBasis;
 }) {
   const gradientId = useId();
   const { ref, width } = useMeasuredWidth(680);
@@ -52,9 +73,37 @@ export function TrendChart({
   /** Index of the point being inspected, or null for none. */
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  if (points.length === 0) {
+  /*
+   * Fewer than two readings is a message, not a chart.
+   *
+   * It used to draw a lone marker with no line and caption it "one reading" - on
+   * the grounds that a line through one point asserts a direction the data does
+   * not contain, which stays true. But it was the wrong trade: with a period
+   * selector, one point is a *normal* outcome rather than a first-day edge case,
+   * and it happens on every period the data does not reach into. A bare dot with
+   * no line and a caption below it reads as a chart that failed to draw, which is
+   * the one thing it must not do. Saying so outright is both more honest and more
+   * legible than a dot pretending to be a graph.
+   *
+   * Two readings is the floor rather than a preference, because it is the smallest
+   * number that can show a movement - and showing a change for a series that has
+   * none is exactly the failure `seriesChange` returning null exists to prevent.
+   */
+  if (points.length < 2) {
     return (
-      <p className="text-sm text-neutral-500">Nothing recorded yet.</p>
+      <div
+        ref={ref}
+        className="rounded-lg border border-dashed border-neutral-300 px-4 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700"
+      >
+        <p className="font-medium text-neutral-700 dark:text-neutral-300">
+          No graph data available
+        </p>
+        <p className="mt-1">
+          {points.length === 0
+            ? "Nothing was recorded in this period."
+            : `One reading, ${formatDate(points[0]!.date)}. A graph needs two.`}
+        </p>
+      </div>
     );
   }
 
@@ -65,8 +114,10 @@ export function TrendChart({
 
   const dates = points.map((p) => new Date(`${p.date}T00:00:00Z`));
   /*
-   * A zero-width time domain maps everything to the middle of the range, which is
-   * exactly where a lone point belongs - no special case needed for one point.
+   * Two points on the same day would give a zero-width domain and collapse
+   * everything to the middle. That cannot happen: one reading per account per day
+   * is enforced by a unique index, and two net-worth snapshots a day apart are
+   * distinct dates by construction.
    */
   const xScale = scaleTime({
     domain: [dates[0], dates[dates.length - 1]],
@@ -77,9 +128,9 @@ export function TrendChart({
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
   /*
-   * Padded so a flat line does not sit on the axis, and so a single point has
-   * somewhere to be. The span is 0 whenever there is one point, or when nothing
-   * has moved, so this is not an edge case.
+   * Padded so a flat line does not sit on the axis. The span is 0 whenever nothing
+   * has moved - two readings of the same value, which is a common case for an
+   * untouched savings account - so this is not an edge case.
    */
   const span = rawMax - rawMin;
   const pad = span === 0 ? Math.max(Math.abs(rawMax) * 0.1, 1) : span * 0.1;
@@ -88,21 +139,36 @@ export function TrendChart({
     range: [innerHeight, 0],
   });
 
-  const first = points[0];
   const last = points[points.length - 1];
-  const single = points.length === 1;
-  const change = last.value - first.value;
-  // One point means change 0, which is not "flat" - it is "no comparison yet".
-  const rose = change > 0;
-  const good = rose === risingIsGood;
+  const first = points[0];
+  /*
+   * Two changes, not one. The line's colour follows the trend the line actually
+   * draws - the whole window - while the reported figure follows `changeBasis`,
+   * which is whatever the page was asked for.
+   */
+  const trend = seriesChangeAt(points, points.length - 1, "period");
+  const reported = seriesChangeAt(points, points.length - 1, changeBasis);
+  const trendTone = tone(trend?.change, risingIsGood);
   // Tailwind 400 rather than 500: calmer against the neutral cards, and legible
   // in both themes without a dark-mode variant.
-  const stroke = single ? "#818cf8" : good ? "#4ade80" : "#f87171";
+  const stroke = STROKE[trendTone];
+  // The reported figure is judged the same way, or the number and its colour
+  // would disagree about the same measurement.
+  const reportedTone =
+    reported === null ? trendTone : tone(reported.change, risingIsGood);
 
   const active = activeIndex === null ? null : points[activeIndex];
   const activeDate = activeIndex === null ? null : dates[activeIndex];
   const activeX = activeDate === null ? 0 : xScale(activeDate) ?? 0;
   const activeY = active === null ? 0 : yScale(active.value) ?? 0;
+  /*
+   * The inspected point's own change, on the same basis as the figure under the
+   * chart. Computed against the point *before* it on the `day` basis, so walking
+   * the series with the arrow keys reads day by day rather than repeating the
+   * total nine hundred times.
+   */
+  const activeChange =
+    activeIndex === null ? null : seriesChangeAt(points, activeIndex, changeBasis);
 
   return (
     <div ref={ref} className="relative w-full">
@@ -110,13 +176,9 @@ export function TrendChart({
         width={width}
         height={height}
         role="img"
-        aria-label={
-          single
-            ? `One ${label.toLowerCase()} reading: ${formatCurrency(last.value)} on ${last.date}`
-            : `${label} from ${first.date} to ${last.date}, currently ${formatCurrency(
-                last.value,
-              )}. Use the left and right arrow keys to read each day.`
-        }
+        aria-label={`${label} from ${first.date} to ${last.date}, currently ${formatCurrency(
+          last.value,
+        )}. Use the left and right arrow keys to read each day.`}
         // Focusable so the series can be read without a mouse. The hover
         // behaviour below is mirrored onto the keyboard for the same reason.
         tabIndex={0}
@@ -175,27 +237,23 @@ export function TrendChart({
             />
           ) : null}
 
-          {single ? null : (
-            <AreaClosed<SeriesPoint>
-              data={points}
-              x={(p) => xScale(new Date(`${p.date}T00:00:00Z`)) ?? 0}
-              y={(p) => yScale(p.value) ?? 0}
-              yScale={yScale}
-              curve={curveMonotoneX}
-              fill={`url(#${gradientId})`}
-            />
-          )}
+          <AreaClosed<SeriesPoint>
+            data={points}
+            x={(p) => xScale(new Date(`${p.date}T00:00:00Z`)) ?? 0}
+            y={(p) => yScale(p.value) ?? 0}
+            yScale={yScale}
+            curve={curveMonotoneX}
+            fill={`url(#${gradientId})`}
+          />
 
-          {single ? null : (
-            <LinePath<SeriesPoint>
-              data={points}
-              x={(p) => xScale(new Date(`${p.date}T00:00:00Z`)) ?? 0}
-              y={(p) => yScale(p.value) ?? 0}
-              curve={curveMonotoneX}
-              stroke={stroke}
-              strokeWidth={2}
-            />
-          )}
+          <LinePath<SeriesPoint>
+            data={points}
+            x={(p) => xScale(new Date(`${p.date}T00:00:00Z`)) ?? 0}
+            y={(p) => yScale(p.value) ?? 0}
+            curve={curveMonotoneX}
+            stroke={stroke}
+            strokeWidth={2}
+          />
 
           <AxisBottom
             top={innerHeight}
@@ -276,36 +334,43 @@ export function TrendChart({
             {formatCurrency(active.value)}
           </p>
           {/*
-            Change is measured from the first snapshot, which is the same basis
-            as the total under the chart. A single point has nothing to compare
-            against, so it is omitted rather than shown as a flat $0.00.
+            Measured against the reading before the one being inspected, on the
+            same basis as the figure under the chart - so both describe the same
+            thing. Omitted when there is no such reading: the first point has
+            nothing before it, and a flat $0.00 would claim it was measured
+            twice.
           */}
-          {single ? null : (
+          {activeChange === null ? null : (
             <p
               className={`tabular-nums ${
-                good ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"
+                TONE_CLASS[tone(activeChange.change, risingIsGood)]
               }`}
             >
-              {active.value - first.value >= 0 ? "+" : ""}
-              {formatCurrency(active.value - first.value)} since{" "}
-              {formatDate(first.date)}
+              {activeChange.change >= 0 ? "+" : ""}
+              {formatCurrency(activeChange.change)} since{" "}
+              {formatDate(activeChange.from.date)}
             </p>
           )}
         </TooltipWithBounds>
       )}
 
-      {single ? (
-        <p className="mt-1 text-sm text-neutral-500">
-          One reading, from {last.date}. A trend appears once there is a second
-          one.
-        </p>
-      ) : (
+      {/*
+          Null rather than a flat $0.00: `seriesChange` declines to report a change
+          it cannot measure, and $0.00 would claim the number was measured twice
+          and did not move. Reachable on the day basis with two readings whose
+          first has nothing before it.
+        */}
+      {reported === null ? null : (
         <p className="mt-1 text-sm">
-          <span className={good ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}>
-            {change >= 0 ? "+" : ""}
-            {formatCurrency(change)}
+          <span className={TONE_CLASS[reportedTone]}>
+            {reported.change >= 0 ? "+" : ""}
+            {formatCurrency(reported.change)}
           </span>{" "}
-          <span className="text-neutral-500">over this period</span>
+          <span className="text-neutral-500">
+            {changeBasis === "day"
+              ? `since ${formatDate(reported.from.date)}`
+              : "over this period"}
+          </span>
         </p>
       )}
     </div>
@@ -326,3 +391,30 @@ function Group({
     <g transform={`translate(${left},${top})`}>{children}</g>
   );
 }
+
+type Tone = "good" | "bad" | "flat";
+
+/**
+ * Judge a movement, knowing whether a rise is good news.
+ *
+ * "flat" is its own answer rather than being folded into "bad": a balance that
+ * did not move is not a loss, and the comparison `change > 0 === risingIsGood`
+ * alone would report exactly that - a flat net worth painted the colour of bad
+ * news, which is what this replaced.
+ */
+function tone(change: number | undefined, risingIsGood: boolean): Tone {
+  if (change === undefined || change === 0) return "flat";
+  return (change > 0) === risingIsGood ? "good" : "bad";
+}
+
+const STROKE: Record<Tone, string> = {
+  good: "#4ade80",
+  bad: "#f87171",
+  flat: "#a3a3a3",
+};
+
+const TONE_CLASS: Record<Tone, string> = {
+  good: "text-green-700 dark:text-green-400",
+  bad: "text-red-700 dark:text-red-400",
+  flat: "text-neutral-500",
+};

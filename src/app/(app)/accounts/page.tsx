@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requireUser } from "@/lib/auth";
+import {
+  changePeriodFrom,
+  parseChangePeriod,
+  resolveAccountChange,
+} from "@/lib/change-period";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
 import {
   accruedInterest,
@@ -9,6 +14,7 @@ import {
   projectPayoff,
 } from "@/lib/loan-math";
 import {
+  getAccountChanges,
   getAccounts,
   getItems,
   getLoanPayments,
@@ -16,6 +22,8 @@ import {
   getNetWorth,
   getTransactionCountsByAccount,
 } from "@/lib/queries";
+import { AccountChangeList } from "@/components/account-change-list";
+import { ChangePeriodPicker } from "@/components/change-period";
 import { ManualLoans } from "@/components/manual-loans";
 import {
   AddAccountButton,
@@ -28,14 +36,27 @@ import { UnlinkButton } from "@/components/unlink-controls";
 
 export const metadata: Metadata = { title: "Accounts · Finance" };
 
-export default async function AccountsPage() {
+export default async function AccountsPage({
+  searchParams,
+}: PageProps<"/accounts">) {
   const user = await requireUser();
+  const params = await searchParams;
 
-  const [items, accounts, netWorth, loans] = await Promise.all([
+  /*
+   * Unlike the dashboard, the period here is chosen rather than assumed. The
+   * breakdown below says "how far has each account moved", and that is a
+   * different question at 30 days than it is at one night - so the window lives
+   * in the URL and defaults to the whole record, which is the one answer that is
+   * never wrong about which window it is describing.
+   */
+  const period = parseChangePeriod(params.change);
+
+  const [items, accounts, netWorth, loans, accountChanges] = await Promise.all([
     getItems(user.id),
     getAccounts(user.id),
     getNetWorth(user.id),
     getLoans(user.id),
+    getAccountChanges(user.id, changePeriodFrom(period)),
   ]);
 
   // Per-institution transaction counts, so the removal dialogs can state exactly
@@ -225,6 +246,33 @@ export default async function AccountsPage() {
           </ul>
         </section>
       ))}
+
+      {/*
+        The breakdown sits with the Totals card rather than above the account
+        lists, because it answers a summary question - "how did the total get
+        here" - rather than "which accounts do I have". The lists above show
+        live balances straight from Plaid; this shows recorded ones with the
+        movement between them, which is a different and slower-moving thing, and
+        putting the two side by side without saying so would look like a
+        disagreement rather than a difference of basis.
+      */}
+      {accounts.length > 0 ? (
+        <section>
+          <header className="mb-2 flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium text-neutral-500">
+              Change by account
+            </h2>
+            <ChangePeriodPicker current={period} />
+          </header>
+          <AccountChangeList
+            rows={accountChanges.map((row) => resolveAccountChange(row, period))}
+            // The lists above already link every account to its own page; making
+            // these rows links too would repeat the same destination three times
+            // on one page. On /net-worth, which has no account list, they do.
+            linkToAccounts={false}
+          />
+        </section>
+      ) : null}
 
       {accounts.length > 0 ? (
         <section className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
