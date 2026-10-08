@@ -49,9 +49,21 @@ export const viewport: Viewport = {
  *
  * Runs inline and synchronously: doing it in an effect or after hydration would
  * paint the wrong theme first and then flip, which is a visible flash on every
- * load. Reads localStorage first, falls back to the OS preference.
+ * load. Nothing else runs before paint on a real page load either - `ThemeToggle`
+ * lives inside the user menu, which is closed by default - so this is the only
+ * thing that sets the class on load, and it cannot delegate to `sync`.
+ *
+ * The three-way decision mirrors `sync()` in theme-toggle.tsx and must stay
+ * identical to it. It used to be `s ? s === "dark" : prefersDark`, which only
+ * consulted the OS when the key was *absent* - so a stored `"system"` took the
+ * `s === "dark"` branch and resolved to `false`. Since `setTheme` stores
+ * `"system"` explicitly, picking "Match system" looked correct for the rest of
+ * the session and then came back light on the next load, with the toggle still
+ * showing "system" selected: the page is painted by this string and read by
+ * `readStored()`, and the two disagreed. `prefers-color-scheme` is consulted
+ * first so that a dark OS never even runs the comparisons that cannot reach it.
  */
-const THEME_SCRIPT = `(function(){try{var s=localStorage.getItem("theme");var d=s?s==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches;document.documentElement.classList.toggle("dark",d);}catch(e){}})();`;
+const THEME_SCRIPT = `(function(){try{var p=window.matchMedia("(prefers-color-scheme: dark)").matches;var s=localStorage.getItem("theme");var d=s==="dark"?true:s==="light"?false:p;document.documentElement.classList.toggle("dark",d);}catch(e){}})();`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
