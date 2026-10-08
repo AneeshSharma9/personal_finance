@@ -65,7 +65,7 @@ export function TapToRevealName({
       </button>
       {open ? (
         <span className="mt-0.5 block text-xs text-neutral-500">
-          Bank calls this {plaidName}
+          ({plaidName})
         </span>
       ) : null}
     </span>
@@ -73,15 +73,23 @@ export function TapToRevealName({
 }
 
 /**
- * Rename one account, or put its bank name back.
+ * An account's name as a heading, with a pencil to change it.
  *
- * Save is an explicit button rather than save-on-blur because this name is not
- * cosmetic: it is the label every list, chart and transaction sub-line in the
- * app keys off, and a blur-save would rename an account from a stray click
- * somewhere else on the page. Enter saves and Escape reverts, so it is still
- * usable without a mouse.
+ * The control lives beside the name rather than in a section of its own, because
+ * the thing being edited *is* the heading: a "Name" block three paragraphs below
+ * the `<h1>` it renames made the connection between them something to remember.
+ *
+ * Saving is unchanged - explicit button rather than save-on-blur, because this
+ * name is not cosmetic. It is the label every list, chart and transaction
+ * sub-line in the app keys off, and a blur-save would rename an account from a
+ * stray click elsewhere on the page. Enter saves and Escape reverts, so it is
+ * still usable without a mouse, and a blank field clears the nickname.
+ *
+ * The guidance that used to sit permanently under the control now appears only
+ * while editing. It describes the field rather than the account, and the account
+ * page already states the bank's name on the line below the heading.
  */
-export function AccountRenameEditor({
+export function AccountNameEditor({
   accountId,
   name,
   plaidName,
@@ -89,7 +97,7 @@ export function AccountRenameEditor({
   accountId: number;
   /** The account's current display name. */
   name: string;
-  /** The bank's name for it - what the field reverts to on reset. */
+  /** The bank's name for it - what a blank field reverts to. */
   plaidName: string;
 }) {
   const router = useRouter();
@@ -134,18 +142,31 @@ export function AccountRenameEditor({
 
   if (!editing) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-neutral-500">
-          {renamed
-            ? `Shown as "${name}" everywhere. The bank calls this ${plaidName}.`
-            : "Shown as the bank's name. Give it one of your own if you would rather."}
-        </p>
+      <div className="flex items-start gap-1.5">
+        <h1
+          className="min-w-0 truncate text-2xl font-semibold tracking-tight"
+          title={accountNameHint(name, plaidName) ?? undefined}
+        >
+          {name}
+        </h1>
+        {/*
+          `mt-1` rather than centring: the pencil is a small glyph against a 24px
+          heading, and `items-center` puts its optical centre below the text's
+          baseline midpoint. Nudged down, it reads as sitting on the baseline.
+        */}
         <button
           type="button"
           onClick={startEditing}
-          className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-700"
+          aria-label="Rename this account"
+          title={renamed ? "Rename" : "Give this account a nickname"}
+          /*
+            `dark:hover:bg-neutral-700`, not 800: the input below paints 800 as its
+            surface, and a hover must never match a surface in the same file even
+            when the two are never on screen together.
+          */
+          className="mt-1 shrink-0 rounded p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-500 dark:hover:bg-neutral-700 dark:hover:text-neutral-200"
         >
-          {renamed ? "Rename" : "Nickname this"}
+          <PencilIcon />
         </button>
       </div>
     );
@@ -176,7 +197,7 @@ export function AccountRenameEditor({
           }}
           aria-label="Nickname for this account"
           placeholder={plaidName}
-          className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800"
+          className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-lg font-medium dark:border-neutral-700 dark:bg-neutral-800"
         />
         <button
           type="submit"
@@ -204,15 +225,37 @@ export function AccountRenameEditor({
       ) : null}
 
       <p className="text-xs text-neutral-500">
-        {renamed ? (
-          <>
-            Up to {MAX_NICKNAME_LENGTH} characters. Leave it empty to go back to{" "}
-            {plaidName}.
-          </>
-        ) : (
-          <>Up to {MAX_NICKNAME_LENGTH} characters. Leave it empty to keep {plaidName}.</>
-        )}
+        {renamed
+          ? `Up to ${MAX_NICKNAME_LENGTH} characters. Leave it empty to go back to (${plaidName}).`
+          : `Up to ${MAX_NICKNAME_LENGTH} characters. Leave it empty to keep (${plaidName}).`}
       </p>
     </div>
+  );
+}
+
+/**
+ * The pencil next to the name.
+ *
+ * Inline svg rather than a glyph character: the glyph renders at whatever weight
+ * and size the surrounding font happens to have, which is not something you can
+ * line up against a 24px heading. Same attributes as the nav icons, and the same
+ * reason for them - with `fill="none"` and no stroke, the shape paints nothing at
+ * all rather than the wrong colour.
+ */
+function PencilIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden
+    >
+      <path d="M4 20h4L20 8l-4-4L4 16v4Z" />
+      <path d="M14 6l4 4" />
+    </svg>
   );
 }

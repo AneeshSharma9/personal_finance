@@ -46,9 +46,16 @@ what an account actually is would make a balance unrecognisable:
   a misclick — the same constraint that moved the removal buttons.
 - **As a detail** — `/accounts/[id]` states it outright, and offers the editor.
 
-**Nickname this** (now on `/accounts/[id]`) — `PATCH /api/accounts/:id`. An empty
-field clears the nickname rather than being rejected, so "reset to what the bank
-calls it" is the same control as setting one.
+The control is a **pencil beside the name**, not a section of its own, because the
+thing being edited *is* the heading — a "Name" block a screen below the `<h1>` it
+renames made you to connect the two. The bank name stays on the sub-line under the
+heading, and the guidance about the field appears only while editing, where it
+describes something rather than the account.
+
+**`PATCH /api/accounts/:id`**. An empty field clears the nickname rather than being
+rejected, so "reset to what the bank calls it" is the same control as setting one.
+Save is an explicit button rather than save-on-blur, because this name labels every
+list, chart and transaction sub-line in the app; Enter saves and Escape reverts.
 
 The account page lists the two sides of the change separately rather than
 replacing the header sub-line with the bank name, so the institution, the mask

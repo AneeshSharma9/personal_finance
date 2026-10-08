@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { AccountRenameEditor } from "@/components/account-rename";
+import { AccountNameEditor } from "@/components/account-rename";
 import { BackLink } from "@/components/back-link";
 import { HoldingsTable, totalValue } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
@@ -68,9 +68,11 @@ export default async function AccountPage({
         </p>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">
-              {account.displayName}
-            </h1>
+            <AccountNameEditor
+              accountId={accountId}
+              name={account.displayName}
+              plaidName={account.name}
+            />
             <p className="text-sm text-neutral-500">
               {account.institutionName ?? "Unknown institution"}
               {account.mask ? ` ····${account.mask}` : ""}
@@ -82,11 +84,13 @@ export default async function AccountPage({
               The bank name is a detail here rather than only a tooltip. This is the
               one page where it is not competing for a line, so a renamed account
               states it outright instead of leaving it to a hover that a phone
-              cannot perform.
+              cannot perform. Reversed against `accountNameHint` - real name first -
+              because the display name is the heading directly above this and
+              repeating it would be noise; "(renamed)" is what carries the label.
             */}
             {isRenamedName(account.displayName, account.name) ? (
               <p className="text-sm text-neutral-500">
-                Bank calls this {account.name}
+                {account.name} (renamed)
               </p>
             ) : null}
           </div>
@@ -164,15 +168,6 @@ export default async function AccountPage({
           </p>
         </section>
       ) : null}
-
-      <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
-        <h2 className="mb-2 text-sm font-medium text-neutral-500">Name</h2>
-        <AccountRenameEditor
-          accountId={accountId}
-          name={account.displayName}
-          plaidName={account.name}
-        />
-      </section>
 
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
         <div className="text-sm">

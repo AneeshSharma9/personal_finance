@@ -43,13 +43,18 @@ export function isRenamedName(displayName: string, plaidName: string): boolean {
  * Takes the two names rather than a row because the rows that reach a screen are
  * not uniform: an account still carries `name` and `nameOverride`, while the
  * change breakdown has already collapsed them to a display name plus the Plaid
- * one. The wording puts the real name first, since that is what someone hovering
- * is trying to check.
+ * one.
+ *
+ * Parenthetical rather than a sentence, and the real name second. The tooltip is
+ * an aside to a label that is already on screen, so it opens with that label and
+ * spends the rest on the one fact it exists to supply. It also matches the form
+ * the change breakdown's own `title` already used, which is why that one reads
+ * as a parenthetical rather than a sentence either.
  */
 export function accountNameHint(
   displayName: string,
   plaidName: string,
 ): string | null {
   if (!isRenamedName(displayName, plaidName)) return null;
-  return `Renamed. Bank calls it "${plaidName}".`;
+  return `${displayName} (${plaidName})`;
 }

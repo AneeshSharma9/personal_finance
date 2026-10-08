@@ -59,20 +59,22 @@ test("nothing is offered to reveal when the account was not renamed", () => {
 
 test("a renamed account can still be checked against the bank's name", () => {
   /*
-   * Only the bank's name is in the hint, because the nickname is already the
-   * text on screen - repeating it would make the tooltip longer for nothing.
+   * Parenthetical, both names in it: the tooltip is an aside to a label already
+   * on screen, so it opens with that label and spends the rest on the fact it
+   * exists to supply.
    */
-  const hint = accountNameHint("Everyday", "Chase Total Checking");
-  assert.ok(hint, "a renamed account should produce a hint");
-  assert.match(hint, /Chase Total Checking/);
+  assert.equal(
+    accountNameHint("Everyday", "Chase Total Checking"),
+    "Everyday (Chase Total Checking)",
+  );
 });
 
 test("a nickname identical to the bank's name reads as unrenamed", () => {
   /*
    * Nothing stops someone typing the name that was already there. Treating that
-   * as renamed would add an empty hint and a pointless "Bank calls this" detail
-   * to the account page for no gain, so the two are compared rather than null
-   * alone being trusted.
+   * as renamed would add an empty hint and a pointless "(renamed)" detail to the
+   * account page for no gain, so the two are compared rather than null alone
+   * being trusted.
    */
   assert.equal(isRenamedName("Checking", "Checking"), false);
   assert.equal(accountNameHint("Checking", "Checking"), null);
