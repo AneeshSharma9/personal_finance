@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
+import { accountDisplayName } from "@/lib/account-name";
 import { requireUserId } from "@/lib/auth";
 
 /**
@@ -162,9 +163,9 @@ async function accountNameMap(accountIds: number[]) {
   if (accountIds.length === 0) return new Map<number, string>();
   const rows = await db.query.accounts.findMany({
     where: inArray(tables.accounts.id, accountIds),
-    columns: { id: true, name: true },
+    columns: { id: true, name: true, nameOverride: true },
   });
-  return new Map(rows.map((r) => [r.id, r.name]));
+  return new Map(rows.map((r) => [r.id, accountDisplayName(r)]));
 }
 
 function parseDate(value: string | null): string | null {

@@ -208,6 +208,17 @@ export const accounts = pgTable(
       .references(() => items.id, { onDelete: "cascade" }),
     plaidAccountId: text("plaid_account_id").notNull(),
     name: text("name").notNull(),
+    /**
+     * The user's own name for this account, e.g. "Emergency Fund". Displayed
+     * everywhere instead of `name`, with the Plaid name still reachable.
+     *
+     * A separate column rather than a write to `name` because `syncAccounts`
+     * puts Plaid's `name` in its upsert `set` map, so an edit to `name` is
+     * silently reverted by the next sync — manual, page load, or nightly cron.
+     * Same reasoning as `transactions.categoryOverride`. Null means "show the
+     * Plaid name", so a fresh account and a renamed one read the same way.
+     */
+    nameOverride: text("name_override"),
     officialName: text("official_name"),
     mask: text("mask"),
     type: accountType("type").notNull(),

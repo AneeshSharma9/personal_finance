@@ -1,8 +1,9 @@
 import "server-only";
 
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, tables, toNumber } from "@/db";
+import { accountDisplayName } from "@/lib/account-name";
 import { requireUserId } from "@/lib/auth";
 
 /**
@@ -31,7 +32,10 @@ export async function GET() {
 
   const accounts = await db.query.accounts.findMany({
     where: inArray(tables.accounts.itemId, itemIds),
-    orderBy: [asc(tables.accounts.type), asc(tables.accounts.name)],
+    orderBy: [
+      asc(tables.accounts.type),
+      asc(sql`coalesce(${tables.accounts.nameOverride}, ${tables.accounts.name})`),
+    ],
   });
 
   // The /item/remove caveat: nothing here should ever delete rows on its own.
@@ -41,6 +45,8 @@ export async function GET() {
       itemId: account.itemId,
       plaidAccountId: account.plaidAccountId,
       name: account.name,
+      nameOverride: account.nameOverride,
+      displayName: accountDisplayName(account),
       officialName: account.officialName,
       mask: account.mask,
       type: account.type,
@@ -146,6 +152,10 @@ export type AccountDto = {
   itemId: number;
   plaidAccountId: string;
   name: string;
+  /** The user's own name for it, or null when they have not set one. */
+  nameOverride: string | null;
+  /** `name` unless `nameOverride` is set. What the UI should show. */
+  displayName: string;
   officialName: string | null;
   mask: string | null;
   type: tables.AccountType;

@@ -64,8 +64,19 @@ export const CHANGE_PERIODS: ChangePeriod[] = [
   { id: "all", label: "All time", basis: "period", days: null },
 ];
 
-/** Whole-record is the default on the accounts page: the fullest honest answer. */
-export const DEFAULT_CHANGE_PERIOD = CHANGE_PERIODS[CHANGE_PERIODS.length - 1]!;
+/**
+ * "Previous day", for the same reason it leads the list.
+ *
+ * It used to be the whole record, on the argument that "All time" is the one
+ * answer that can never be wrong about which window it is describing. True, and
+ * not what anyone opening these pages is asking - the picker is right there, so
+ * the widest window is never more than one click away, while defaulting to it
+ * means the common case has to be corrected every visit.
+ *
+ * The default is the shortest period rather than a named one so that reordering
+ * `CHANGE_PERIODS` cannot silently change what a bare URL means.
+ */
+export const DEFAULT_CHANGE_PERIOD = CHANGE_PERIODS[0]!;
 
 /**
  * The periods a chart page offers.
@@ -200,7 +211,10 @@ export type BalanceReading = {
  */
 export type AccountChangeRow = {
   accountId: number;
+  /** What to show: the user's name for the account if they set one. */
   name: string;
+  /** Plaid's name for it, so a renamed account can still reveal what it is. */
+  plaidName: string;
   institutionName: string | null;
   mask: string | null;
   /** `tables.AccountType`. A plain string so this stays out of the db graph. */

@@ -1,6 +1,9 @@
 import Link from "next/link";
 
+import { AccountName } from "@/components/account-name";
+import { TapToRevealName } from "@/components/account-rename";
 import { splitByLiability, type ResolvedAccountChange } from "@/lib/change-period";
+import { isRenamedName } from "@/lib/account-name";
 import { formatCurrency, formatDate } from "@/lib/format";
 
 /**
@@ -80,7 +83,25 @@ function Row({
 }) {
   const body = (
     <>
-      <span className="min-w-0 truncate text-sm">{row.name}</span>
+      {/*
+        The two variants differ only in what a tap can do here. On /accounts these
+        rows are plain, so the name expands to reveal the bank's on touch; on
+        /net-worth the row is the link to the account's own page and a button
+        nested in an anchor is invalid, so the name keeps the tooltip only.
+      */}
+      {linkToAccount ? (
+        <AccountName
+          name={row.name}
+          plaidName={row.plaidName}
+          className="min-w-0 truncate text-sm"
+        />
+      ) : (
+        <TapToRevealName
+          name={row.name}
+          plaidName={row.plaidName}
+          className="min-w-0"
+        />
+      )}
       <span className="shrink-0 text-right">
         <span className="block text-sm font-medium tabular-nums">
           {row.latest === null ? "—" : formatCurrency(row.latest.value)}
@@ -150,5 +171,9 @@ function rowTitle(row: ResolvedAccountChange): string {
       : `${row.change >= 0 ? "+" : ""}${formatCurrency(row.change)} since ${formatDate(
           row.from.date,
         )}`;
-  return `${row.name} — ${balance}, ${change}`;
+  // A renamed account's row would otherwise name the account by a name the bank
+  // does not recognise, in the one tooltip on the page that explains the row.
+  const renamed = isRenamedName(row.name, row.plaidName);
+  const label = renamed ? `${row.name} (${row.plaidName})` : row.name;
+  return `${label} — ${balance}, ${change}`;
 }

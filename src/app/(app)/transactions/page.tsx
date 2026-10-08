@@ -58,7 +58,7 @@ export default async function TransactionsPage({
         <p className="text-sm text-neutral-500">
           {total.toLocaleString("en-US")} transaction
           {total === 1 ? "" : "s"}
-          {account ? ` in ${account.name}` : ""}
+          {account ? ` in ${account.displayName}` : ""}
           {category ? ` in ${category}` : ""}
           {search ? ` matching "${search}"` : ""}
         </p>
@@ -114,7 +114,7 @@ export default async function TransactionsPage({
                 {/* Institution in the label: two banks can both have a
                     "Checking" and the filter is useless if they are
                     indistinguishable. */}
-                {row.name}
+                {row.displayName}
                 {row.institutionName ? ` · ${row.institutionName}` : ""}
               </option>
             ))}

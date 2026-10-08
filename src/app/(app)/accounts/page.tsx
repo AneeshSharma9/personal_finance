@@ -23,6 +23,7 @@ import {
   getTransactionCountsByAccount,
 } from "@/lib/queries";
 import { AccountChangeList } from "@/components/account-change-list";
+import { AccountName } from "@/components/account-name";
 import { ChangePeriodPicker } from "@/components/change-period";
 import { ManualLoans } from "@/components/manual-loans";
 import {
@@ -46,8 +47,9 @@ export default async function AccountsPage({
    * Unlike the dashboard, the period here is chosen rather than assumed. The
    * breakdown below says "how far has each account moved", and that is a
    * different question at 30 days than it is at one night - so the window lives
-   * in the URL and defaults to the whole record, which is the one answer that is
-   * never wrong about which window it is describing.
+   * in the URL, and defaults to the previous day because that is what someone
+   * opening this page is asking. Every other window, including the whole record,
+   * is one click away in the picker below.
    */
   const period = parseChangePeriod(params.change);
 
@@ -194,7 +196,11 @@ export default async function AccountsPage({
                   className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{account.name}</p>
+                    <AccountName
+                      name={account.displayName}
+                      plaidName={account.name}
+                      className="block truncate font-medium"
+                    />
                     <p className="text-xs text-neutral-500">
                       {account.institutionName ?? "Unknown institution"}
                       {account.mask ? ` ····${account.mask}` : ""} · balance
@@ -226,7 +232,11 @@ export default async function AccountsPage({
                   className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900"
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{account.name}</p>
+                    <AccountName
+                      name={account.displayName}
+                      plaidName={account.name}
+                      className="block truncate font-medium"
+                    />
                     <p className="text-xs text-neutral-500">
                       {account.institutionName ?? "Unknown institution"}
                       {account.mask ? ` ····${account.mask}` : ""}

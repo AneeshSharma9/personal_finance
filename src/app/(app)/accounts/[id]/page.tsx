@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AccountRenameEditor } from "@/components/account-rename";
 import { BackLink } from "@/components/back-link";
 import { HoldingsTable, totalValue } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
 import { RemoveAccountButton } from "@/components/unlink-controls";
+import { isRenamedName } from "@/lib/account-name";
 import { requireUser } from "@/lib/auth";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
@@ -67,7 +69,7 @@ export default async function AccountPage({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-semibold tracking-tight">
-              {account.name}
+              {account.displayName}
             </h1>
             <p className="text-sm text-neutral-500">
               {account.institutionName ?? "Unknown institution"}
@@ -76,6 +78,17 @@ export default async function AccountPage({
                 ? ` · ${account.officialName}`
                 : ""}
             </p>
+            {/*
+              The bank name is a detail here rather than only a tooltip. This is the
+              one page where it is not competing for a line, so a renamed account
+              states it outright instead of leaving it to a hover that a phone
+              cannot perform.
+            */}
+            {isRenamedName(account.displayName, account.name) ? (
+              <p className="text-sm text-neutral-500">
+                Bank calls this {account.name}
+              </p>
+            ) : null}
           </div>
           <div className="text-right">
             <p className="text-xl font-semibold tabular-nums">
@@ -152,6 +165,15 @@ export default async function AccountPage({
         </section>
       ) : null}
 
+      <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
+        <h2 className="mb-2 text-sm font-medium text-neutral-500">Name</h2>
+        <AccountRenameEditor
+          accountId={accountId}
+          name={account.displayName}
+          plaidName={account.name}
+        />
+      </section>
+
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
         <div className="text-sm">
           {/*
@@ -172,7 +194,7 @@ export default async function AccountPage({
         </div>
         <RemoveAccountButton
           accountId={accountId}
-          accountName={account.name}
+          accountName={account.displayName}
           transactionCount={transactionCount}
         />
       </section>

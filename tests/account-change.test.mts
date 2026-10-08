@@ -35,6 +35,9 @@ function row(overrides: Partial<AccountChangeRow> = {}): AccountChangeRow {
   return {
     accountId: 1,
     name: "Checking",
+    // Same as `name` unless a test renames the account: the unrenamed case is
+    // what makes `plaidName` a field rather than something to derive.
+    plaidName: "Checking",
     institutionName: "Bank",
     mask: "1234",
     type: "depository",
@@ -159,7 +162,19 @@ test("an account of an unlisted type counts as an asset", () => {
   assert.equal(splitByLiability(rows).assets.length, 1);
 });
 
-test("an unrecognised or missing period falls back to the whole record", () => {
+test("the default period is the previous day", () => {
+  /*
+   * Asserted as a literal rather than against `DEFAULT_CHANGE_PERIOD`, because
+   * every other test here compares against that constant - which would keep
+   * passing if the default silently changed to anything at all, including the
+   * whole record it used to be.
+   */
+  assert.equal(DEFAULT_CHANGE_PERIOD.id, "1d");
+  assert.equal(DEFAULT_CHANGE_PERIOD.basis, "day");
+  assert.equal(parseChangePeriod(undefined).id, "1d");
+});
+
+test("an unrecognised or missing period falls back to the default", () => {
   assert.equal(parseChangePeriod(undefined).id, DEFAULT_CHANGE_PERIOD.id);
   assert.equal(parseChangePeriod("yesterday").id, DEFAULT_CHANGE_PERIOD.id);
   assert.equal(parseChangePeriod(42).id, DEFAULT_CHANGE_PERIOD.id);
@@ -339,6 +354,23 @@ test("parseChartPeriod is the plain parser", () => {
   }
   assert.equal(parseChartPeriod(undefined).id, DEFAULT_CHANGE_PERIOD.id);
   assert.equal(parseChartPeriod("garbage").id, DEFAULT_CHANGE_PERIOD.id);
+});
+
+test("the net worth chart opens on the same short window", () => {
+  /*
+   * Worth stating because it is a consequence rather than the point: `parseChartPeriod`
+   * shares this default, so `/net-worth` no longer plots a year of history on arrival.
+   * A one-day basis plots two readings (`changePeriodWindow` widens it deliberately),
+   * which is enough for the day-over-day change and thin for a trend line - so if the
+   * long view is wanted by default on that page alone, the default has to stop being
+   * shared rather than this assertion being loosened.
+   */
+  assert.equal(parseChartPeriod(undefined).id, "1d");
+  const today = new Date("2026-10-08T09:00:00Z");
+  assert.equal(
+    changePeriodWindow(parseChartPeriod(undefined), today),
+    "2026-10-06",
+  );
 });
 
 test("the chart window and the change window agree on the same day", () => {

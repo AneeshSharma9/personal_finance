@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { cache } from "react";
 
 import { db, tables, toNumber } from "@/db";
+import { accountDisplayName } from "@/lib/account-name";
 import type { AccountChangeRow } from "@/lib/change-period";
 import { isRemainderBucket } from "@/lib/categories";
 import {
@@ -60,7 +61,18 @@ export const getAccountIds = cache(
 
 export type AccountWithItem = tables.Account & {
   institutionName: string | null;
+  /** The name to show: the user's own if they set one, otherwise Plaid's. */
+  displayName: string;
 };
+
+/**
+ * Order accounts by the name they are shown under, not by Plaid's.
+ *
+ * `coalesce` in SQL rather than sorting the returned rows in JS because the
+ * accounts page groups by type and slices, and a sort applied before those steps
+ * is the one that survives them.
+ */
+const displayNameOrder = sql`coalesce(${tables.accounts.nameOverride}, ${tables.accounts.name})`;
 
 /** All accounts with balances, grouped-ready for the accounts page. */
 export async function getAccounts(userId: string): Promise<AccountWithItem[]> {
@@ -81,7 +93,7 @@ export async function getAccounts(userId: string): Promise<AccountWithItem[]> {
     ),
     orderBy: [
       asc(tables.accounts.type),
-      asc(tables.accounts.name),
+      asc(displayNameOrder),
       asc(tables.accounts.id),
     ],
   });
@@ -89,6 +101,7 @@ export async function getAccounts(userId: string): Promise<AccountWithItem[]> {
   return rows.map((row) => ({
     ...row,
     institutionName: institutionByItemId.get(row.itemId) ?? null,
+    displayName: accountDisplayName(row),
   }));
 }
 
@@ -189,7 +202,7 @@ export async function getTransactions(
     }),
     db.query.accounts.findMany({
       where: inArray(tables.accounts.id, accountIds),
-      columns: { id: true, name: true },
+      columns: { id: true, name: true, nameOverride: true },
     }),
     // Which of these transactions are tagged as loan payments. One query for the
     // page rather than a lookup per row, joined back to transactions so it is
@@ -215,7 +228,7 @@ export async function getTransactions(
     }),
   ]);
 
-  const accountNameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const accountNameById = new Map(accounts.map((a) => [a.id, accountDisplayName(a)]));
   const budgetNameById = new Map(budgets.map((b) => [b.id, b.name]));
   const loanByTransaction = new Map(
     tagged.map((row) => [row.transactionId, row.loanId]),
@@ -556,9 +569,9 @@ export async function getUnassignedTransactions(
           (
             await db.query.accounts.findMany({
               where: inArray(tables.accounts.id, detailAccountIds),
-              columns: { id: true, name: true },
+              columns: { id: true, name: true, nameOverride: true },
             })
-          ).map((account) => [account.id, account.name]),
+          ).map((account) => [account.id, accountDisplayName(account)]),
         );
 
   const suggestions = await suggestBucketAssignments(
@@ -1210,9 +1223,9 @@ export async function getTransactionsInBucket(
           (
             await db.query.accounts.findMany({
               where: inArray(tables.accounts.id, detailAccountIds),
-              columns: { id: true, name: true },
+              columns: { id: true, name: true, nameOverride: true },
             })
-          ).map((account) => [account.id, account.name]),
+          ).map((account) => [account.id, accountDisplayName(account)]),
         );
 
   return rows.map((row) => {
@@ -1412,7 +1425,7 @@ export async function getLiabilities(
     ),
   });
 
-  const nameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const nameById = new Map(accounts.map((a) => [a.id, accountDisplayName(a)]));
 
   return rows.map((r) => ({
     ...r,
@@ -1470,7 +1483,7 @@ export async function getHoldings(
     )
     .orderBy(asc(tables.securities.name));
 
-  const accountNameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const accountNameById = new Map(accounts.map((a) => [a.id, accountDisplayName(a)]));
 
   return rows.map((r) => ({
     ...r,
@@ -1782,7 +1795,11 @@ export async function getAccountForUser(
     .limit(1);
 
   if (!row) return null;
-  return { ...row.account, institutionName: row.institutionName };
+  return {
+    ...row.account,
+    institutionName: row.institutionName,
+    displayName: accountDisplayName(row.account),
+  };
 }
 
 /**
@@ -1854,6 +1871,7 @@ export async function getAccountChanges(
   const rows = await db.execute<{
     id: number;
     name: string;
+    name_override: string | null;
     mask: string | null;
     type: string;
     institution_name: string | null;
@@ -1867,6 +1885,7 @@ export async function getAccountChanges(
     select
       a.id,
       a.name,
+      a.name_override,
       a.mask,
       a.type,
       i.institution_name,
@@ -1911,12 +1930,13 @@ export async function getAccountChanges(
       limit 1
     ) oldest on true
     where i.user_id = ${userId}
-    order by a.type, a.name
+    order by a.type, coalesce(a.name_override, a.name)
   `);
 
   return rows.map((row) => ({
     accountId: Number(row.id),
-    name: row.name,
+    name: row.name_override ?? row.name,
+    plaidName: row.name,
     institutionName: row.institution_name,
     mask: row.mask,
     type: row.type,

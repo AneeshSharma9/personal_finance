@@ -1,0 +1,14 @@
+-- A nickname for an account: what the user calls it, shown instead of Plaid's
+-- name, with the bank's name still reachable.
+--
+-- Its own column rather than a write to `name` because `syncAccounts` puts
+-- Plaid's `name` in the upsert's `set` map. A rename in `name` would therefore
+-- be reverted by the next sync - a manual one, one triggered by a page load, or
+-- the nightly cron - with no error anywhere. Same reasoning as
+-- `transactions.category_override`.
+--
+-- Nullable, and no backfill: every existing account already reads correctly with
+-- a null override, because null means "show the bank's name". The display rule is
+-- `coalesce(name_override, name)`, applied at read time so a rename takes effect
+-- everywhere at once rather than being copied into the places that show a name.
+ALTER TABLE "accounts" ADD COLUMN "name_override" text;

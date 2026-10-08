@@ -23,11 +23,43 @@ is why the buttons are on the detail pages and not on the list.
 **Add a loan** stays on `/accounts`, because creating is a list-level action and
 has nowhere else to belong.
 
+## Nicknames
+
+An account can be given one of your own names — "Everyday", "Emergency Fund" —
+which is shown everywhere instead of the bank's, in the accounts lists, the
+change breakdown, net worth, and a transaction's account sub-line.
+
+It is a nickname rather than a rename because `accounts.name` belongs to Plaid:
+`syncAccounts` writes it on every sync, so a rename stored there would be reverted
+by the next one, silently. The user's name lives in `accounts.name_override` and
+is applied at read time (`accountDisplayName`), so it survives every sync and a
+nickname is reversible rather than destructive. The bank's name is never lost —
+it stays in `name` and is what comes back when you clear the nickname.
+
+The bank's name stays reachable in three places, because a nickname that hides
+what an account actually is would make a balance unrecognisable:
+
+- **On hover** — a `title` on the name wherever it appears, via `AccountName`.
+- **On tap** — `TapToRevealName` expands the name in place. Only on the change
+  breakdown, and only where it is not a link: the accounts list rows are links
+  from end to end, and a button nested inside an anchor is both invalid HTML and
+  a misclick — the same constraint that moved the removal buttons.
+- **As a detail** — `/accounts/[id]` states it outright, and offers the editor.
+
+**Nickname this** (now on `/accounts/[id]`) — `PATCH /api/accounts/:id`. An empty
+field clears the nickname rather than being rejected, so "reset to what the bank
+calls it" is the same control as setting one.
+
+The account page lists the two sides of the change separately rather than
+replacing the header sub-line with the bank name, so the institution, the mask
+and the official name stay on screen either way.
+
 ## Change by account
 
 A **Change by account** section sits between the account lists and the Totals
 card: every account's recorded balance and how far it has moved, over a period you
-choose. The period is `?change=`, defaulting to **All time**.
+choose. The period is `?change=`, defaulting to **Previous day** — the same default
+`/net-worth` uses.
 
 Plain links, no client state, for the same reason the month strip and the cash
 flow scope are URL-driven: the server already knows the answer, and the choice is
@@ -39,11 +71,15 @@ day-over-day option is worth having here most of all: on a page with no chart,
 "which account moved since yesterday, and by how much" is the question the list is
 usually opened to answer.
 
-It defaults to **all time** rather than to something short, which is the reverse
-of the dashboard, and the reason is that the two pages are answering different
-questions. The dashboard opens on every visit and asks what happened; here you
-arrive already curious about a window, so choosing one is deliberate and defaulting
-away from the whole record would answer a question nobody asked.
+It used to default to **all time**, on the argument that the widest window is the
+one answer that can never be wrong about which window it is describing. That was
+true and it answered a question nobody was asking: the picker is right there, so
+every other window is one click away, while defaulting to the widest means the
+common case gets corrected on every visit. **Previous day** leads the list for the
+same reason it leads `CHANGE_PERIODS`.
+
+`DEFAULT_CHANGE_PERIOD` is now the *first* entry rather than the last, so
+reordering the list cannot silently change what a bare URL means.
 
 The balances shown are the nightly job's **recorded** ones rather than Plaid's
 live `current_balance`, and the section says so. That is also why the section
