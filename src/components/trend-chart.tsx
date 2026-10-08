@@ -7,7 +7,7 @@ import { GridRows } from "@visx/grid";
 import { scaleLinear, scaleTime } from "@visx/scale";
 import { AreaClosed, LinePath } from "@visx/shape";
 import { TooltipWithBounds } from "@visx/tooltip";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
@@ -35,8 +35,17 @@ import { useMeasuredWidth } from "@/lib/use-measured-width";
  * data available" panel instead - see the early return for why that replaced the
  * lone marker it used to draw.
  *
- * Hover and keyboard both drive the same `activeIndex`, so the tooltip is
- * reachable without a mouse and there is only one code path to position it.
+ * Pointer, hover and keyboard all drive the same `activeIndex`, so the tooltip is
+ * reachable by finger and by keyboard as well as by mouse, and there is only one
+ * code path to position it.
+ *
+ * On touch the series is scrubbed by dragging a finger across it. That needs
+ * **pointer** events rather than mouse ones: `onMouseMove` does fire for a dragged
+ * finger on most browsers, but only once the browser has decided the drag is not a
+ * scroll, and on a chart in a vertically scrolling page it usually is - so the
+ * tooltip never appeared at all on a phone. `touch-pan-y` on the svg is what makes
+ * that decision explicit: the browser keeps vertical panning for itself, and
+ * horizontal movement is ours to read.
  */
 export function TrendChart({
   points,
@@ -72,6 +81,59 @@ export function TrendChart({
 
   /** Index of the point being inspected, or null for none. */
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  /*
+   * Whether a non-mouse pointer is currently pressed on the chart. A ref, because
+   * it is read on every `pointermove` of a drag: as state it would re-render the
+   * whole series sixty times a second purely to learn that the finger is still
+   * down.
+   */
+  const dragging = useRef(false);
+
+  /*
+   * The chart's own element, so a press anywhere else on the page can dismiss a
+   * touch selection. See the effect below for why that is needed.
+   */
+  const chartRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Snap the inspected point to the recorded day nearest a pointer position.
+   *
+   * The event is passed rather than a coordinate because `localPoint` needs the
+   * target element to resolve the position, and it reads `clientX`/`clientY`
+   * directly - a pointer event satisfies that without any adaptation.
+   */
+  function inspect(event: React.PointerEvent<SVGSVGElement>) {
+    const point = localPoint(event);
+    if (!point) return;
+    const date = xScale.invert(point.x - margin.left);
+    if (!date) return;
+    setActiveIndex(nearestIndex(points, date));
+  }
+
+  /*
+   * Dismiss a touch selection on the next press anywhere else on the page.
+   *
+   * Releasing the finger deliberately does NOT clear it, because that is how you
+   * say "I have read that" - and a finger covering the tooltip is exactly when you
+   * want to read it. So the tooltip has to outlive the gesture, which leaves
+   * something on screen with nothing to dismiss it, and the honest dismissal is
+   * "tap anywhere else", the same contract a popover has.
+   *
+   * Without this, `pointerleave` would have to do it - and for touch the browser
+   * fires `pointerleave` the moment the finger lifts, since the touch pointer stops
+   * existing. So the obvious implementation clears the selection on release, which
+   * makes scrubbing to a point and reading it impossible.
+   */
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      if (dragging.current) return;
+      if (chartRef.current?.contains(event.target as Node)) return;
+      setActiveIndex(null);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   /*
    * Fewer than two readings is a message, not a chart.
@@ -171,7 +233,7 @@ export function TrendChart({
     activeIndex === null ? null : seriesChangeAt(points, activeIndex, changeBasis);
 
   return (
-    <div ref={ref} className="relative w-full">
+    <div ref={mergeRefs(ref, chartRef)} className="relative w-full">
       <svg
         width={width}
         height={height}
@@ -197,16 +259,41 @@ export function TrendChart({
             return Math.min(Math.max(next, 0), points.length - 1);
           });
         }}
-        onBlur={() => setActiveIndex(null)}
-        onMouseMove={(event) => {
-          const point = localPoint(event);
-          if (!point) return;
-          const date = xScale.invert(point.x - margin.left);
-          if (!date) return;
-          setActiveIndex(nearestIndex(points, date));
+onBlur={() => setActiveIndex(null)}
+        onPointerDown={(event) => {
+          // Captured so a drag that wanders off the chart keeps tracking. Without
+          // it the selection freezes where the finger crossed the edge, which on a
+          // narrow phone is most of the width from where the user is touching.
+          event.currentTarget.setPointerCapture(event.pointerId);
+          if (event.pointerType !== "mouse") dragging.current = true;
+          inspect(event);
         }}
-        onMouseLeave={() => setActiveIndex(null)}
-        className="text-neutral-400 outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:text-neutral-500"
+        onPointerMove={(event) => {
+          // A mouse inspects on hover; anything else only while pressed, so a finger
+          // resting on the page after a scroll cannot leave a tooltip parked here.
+          if (event.pointerType === "mouse" || dragging.current) inspect(event);
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          dragging.current = false;
+          // Deliberately leaves the selection in place for touch. Releasing is how
+          // you say "I have read that", and a finger is covering the tooltip at
+          // exactly the moment you want to read it - so clearing here would make
+          // scrubbing to a point and reading it impossible.
+        }}
+        onPointerCancel={() => {
+          // The browser took the gesture over for a scroll, so it never happened.
+          dragging.current = false;
+          setActiveIndex(null);
+        }}
+        onPointerLeave={() => {
+          // Mouse only. Touch is dismissed by the document listener above, because
+          // `pointerleave` fires the moment a finger lifts.
+          if (!dragging.current) setActiveIndex(null);
+        }}
+        className="text-neutral-400 outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 touch-pan-y dark:text-neutral-500"
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -375,6 +462,24 @@ export function TrendChart({
       )}
     </div>
   );
+}
+
+/**
+ * Write one ref into two, so the chart can keep its own element handle without
+ * replacing the measured-width observer's.
+ *
+ * `useMeasuredWidth` owns a ref of its own and needs the real node attached, so
+ * taking it over would break the width measurement - which is what makes the
+ * drawing and the HTML tooltip agree at all. Assigning both instead of either is
+ * the only way both work.
+ */
+function mergeRefs<T>(...refs: (React.Ref<T> | null | undefined)[]) {
+  return (value: T | null) => {
+    for (const ref of refs) {
+      if (typeof ref === "function") ref(value);
+      else if (ref) ref.current = value;
+    }
+  };
 }
 
 /** visx has no <g> shorthand in these packages; this keeps the JSX readable. */

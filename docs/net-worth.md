@@ -133,9 +133,49 @@ row per account per day, written by the same cron, and it **starts empty**: ther
 is nothing to backfill. An account page shows a "fills in from tomorrow" message
 until the first few runs.
 
-Hover and keyboard share one `activeIndex`, so the tooltip is reachable without a
-mouse and there is a single code path that positions it. Arrow keys step through
-the series, Escape clears it, and the accessible name says so.
+Pointer, hover and keyboard share one `activeIndex`, so the tooltip is reachable by
+finger and by keyboard as well as by mouse, and there is a single code path that
+positions it. Arrow keys step through the series, Escape clears it, and the
+accessible name says so.
+
+## Scrubbing a chart with a finger
+
+On touch the series is read by **dragging a finger across it**. Four things have to
+hold, and each of them fails silently — the chart looks correct on a desktop and
+does nothing on a phone, which is exactly why they are pinned in
+`tests/chart-touch.test.mts`.
+
+**Pointer events, not mouse events.** `onMouseMove` *does* fire for a dragged
+finger on most browsers, but only once the browser has decided the drag is not a
+scroll — and on a chart in a vertically scrolling page it usually is. So the tooltip
+never appeared at all on a phone.
+
+**`touch-pan-y`, not `touch-action: none`.** `none` makes the scrub work perfectly
+and breaks scrolling the page whenever a gesture *starts* on a chart, which on a
+phone is most of the screen height here. `pan-y` claims the horizontal axis for the
+chart and hands vertical back to the browser.
+
+**Capture the pointer on press.** Without it the selection freezes at whatever point
+the finger crossed the edge, which on a narrow phone is most of the chart's width
+from where the user is actually touching.
+
+**A release must not clear the selection.** The finger is covering the tooltip at
+exactly the moment you want to read it, and lifting is how you say "I have read
+that". Clearing there makes scrubbing to a point and reading it impossible.
+
+That last one has a trap worth writing down, because the obvious implementation
+breaks it. If the selection outlives the gesture, the obvious way to dismiss it is
+`pointerleave` — and **for touch the browser fires `pointerleave` the moment the
+finger lifts**, because the touch pointer ceases to exist once released. So the
+obvious version clears the selection exactly when it was told not to. The real
+dismissal is a document-level `pointerdown` listener that ignores presses inside the
+chart: tap anywhere else and it goes, the same contract a popover has. `onBlur` and
+Escape still clear it too.
+
+The chart's own element handle is needed for that `contains` check, so it and
+`useMeasuredWidth`'s ref are merged onto one node. Taking either over would break
+the other, and the width measurement is load-bearing — see the `viewBox` note
+above.
 
 Two things worth knowing if you add a chart here:
 

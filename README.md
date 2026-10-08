@@ -31,7 +31,7 @@ the signed-in user's id.
 | Auth | Supabase Auth, locked to an email allowlist |
 | Plaid | `plaid` Node SDK + `react-plaid-link` |
 | Charts | `visx` (scales, shapes, axes, sankey, tooltip) |
-| Tests | `node:test` via `tsx` (398 tests) |
+| Tests | `node:test` via `tsx` (406 tests) |
 
 ## Setup
 
@@ -252,7 +252,7 @@ Two conventions worth knowing before you read the code:
 ## Development
 
 ```bash
-npm test          # 398 tests, no database required
+npm test          # 406 tests, no database required
 npm run typecheck
 npm run lint
 ```
