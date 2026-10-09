@@ -6,6 +6,8 @@ import { LoanActions } from "@/components/loan-actions";
 import { TrendChart } from "@/components/trend-chart";
 import { requireUser } from "@/lib/auth";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
+import { balancesHidden } from "@/lib/privacy";
 import { accruedInterest, loanBalanceSeries, projectPayoff } from "@/lib/loan-math";
 import {
   getLoanBalanceHistory,
@@ -26,6 +28,7 @@ export const metadata: Metadata = { title: "Loan · Finance" };
  */
 export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
   const user = await requireUser();
+  const hidden = await balancesHidden();
   const { id: rawId } = await params;
 
   const loanId = Number.parseInt(rawId, 10);
@@ -89,17 +92,17 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
             <p className="text-sm text-neutral-500">
               {Number(loan.apr).toFixed(2)}% APR
               {loan.paymentAmount !== null
-                ? ` · ${formatCurrency(Number(loan.paymentAmount))}/mo`
+                ? ` · ${amountFor(formatCurrency(Number(loan.paymentAmount)), hidden)}/mo`
                 : ""}
               {` · opened ${formatDate(loan.openedOn)}`}
             </p>
           </div>
           <div className="text-right">
             <p className="text-xl font-semibold tabular-nums">
-              {formatCurrency(balance)}
+              {amountFor(formatCurrency(balance), hidden)}
             </p>
             <p className="text-xs text-neutral-500">
-              of {formatCurrency(principal)} borrowed
+              of {amountFor(formatCurrency(principal), hidden)} borrowed
             </p>
           </div>
         </div>
@@ -114,15 +117,21 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
             A loan falling is the good case, so the chart's "up is green" rule is
             inverted: here a flat line is the bad outcome, not a rising one.
           */}
-          <TrendChart points={history} label="Balance owed" risingIsGood={false} />
+          <TrendChart
+            points={history}
+            label="Balance owed"
+            risingIsGood={false}
+            hidden={hidden}
+          />
           <p className="mt-2 text-xs text-neutral-500">
             {history.length <= 1
-              ? `Nothing paid yet, so there is nothing to chart beyond ${formatCurrency(
-                  balance,
+              ? `Nothing paid yet, so there is nothing to chart beyond ${amountFor(
+                  formatCurrency(balance),
+                  hidden,
                 )}.`
-              : `${history.length} points from ${opening ? formatCurrency(opening.balance) : "—"} on ${formatDate(
+              : `${history.length} points from ${opening ? amountFor(formatCurrency(opening.balance), hidden) : "—"} on ${formatDate(
                   opening?.date ?? today,
-                )} to ${formatCurrency(balance)} today.`}
+                )} to ${amountFor(formatCurrency(balance), hidden)} today.`}
           </p>
         </div>
       </section>
@@ -130,7 +139,10 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Paid off" value={paid === null ? null : `${Math.max(0, Math.min(100, paid)).toFixed(0)}%`} />
         <Stat label="Payments" value={String(payments.length)} />
-        <Stat label="Interest accrued" value={formatCurrency(pendingInterest)} />
+        <Stat
+          label="Interest accrued"
+          value={amountFor(formatCurrency(pendingInterest), hidden)}
+        />
         <Stat
           label="Payoff"
           value={projection ? `${projection.months} mo` : null}
@@ -143,7 +155,7 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
       */}
       {pendingInterest > 0 ? (
         <p className="text-xs text-neutral-500">
-          {formatCurrency(pendingInterest)} of interest has accrued since the last
+          {amountFor(formatCurrency(pendingInterest), hidden)} of interest has accrued since the last
           payment and is <strong>not</strong> in the balance above — it is applied
           when the next payment is tagged.
         </p>
@@ -191,9 +203,9 @@ export default async function LoanPage({ params }: PageProps<"/loans/[id]">) {
                   </span>
                 </span>
                 <span className="shrink-0 tabular-nums text-neutral-500">
-                  {formatCurrency(payment.amount)} ={" "}
-                  {formatCurrency(payment.principal)} principal +{" "}
-                  {formatCurrency(payment.interest)} interest
+                  {amountFor(formatCurrency(payment.amount), hidden)} ={" "}
+                  {amountFor(formatCurrency(payment.principal), hidden)} principal +{" "}
+                  {amountFor(formatCurrency(payment.interest), hidden)} interest
                 </span>
               </li>
             ))}

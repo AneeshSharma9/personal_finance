@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { BarList } from "@/components/bar-list";
+import { Amount } from "@/components/amount";
+import { BalanceVisibilityToggle } from "@/components/balance-visibility-toggle";
 import { BudgetSummary } from "@/components/budget-summary";
 import { CashFlow } from "@/components/cash-flow";
 import { DONUT_COLOURS, Donut } from "@/components/donut";
@@ -10,6 +12,7 @@ import { SyncButton } from "@/components/sync-button";
 import { DEFAULT_HISTORY_DAYS, daysAgo } from "@/lib/change-period";
 import { formatCurrency, formatPercent, monthRange } from "@/lib/format";
 import { payoffProgress } from "@/lib/loan-math";
+import { balancesHidden } from "@/lib/privacy";
 import {
   getBudgetSummary,
   getBudgetsWithActuals,
@@ -46,6 +49,12 @@ export default async function DashboardPage() {
     "en-US",
     { month: "long", year: "numeric", timeZone: "UTC" },
   );
+
+  /*
+   * One read of the hide-balances cookie for the whole page, so every figure below
+   * is decided by the same answer rather than each re-reading it.
+   */
+  const hidden = await balancesHidden();
 
   const flowMonths = lastMonths(6);
 
@@ -179,27 +188,49 @@ export default async function DashboardPage() {
                 <h2 className="text-sm font-medium text-neutral-500">
                   Net worth
                 </h2>
-                <p className="text-3xl font-semibold tabular-nums">
-                  {formatCurrency(netWorth.netWorth)}
-                </p>
+                {/*
+                  The toggle for the whole app's balances. Pressing the headline
+                  hides every balance on every page, because this is the figure
+                  people actually want to keep off a screen when they are sharing
+                  it - and because the alternative, a control in a menu nobody
+                  opens before a screen share, would not be used.
+                */}
+                <BalanceVisibilityToggle
+                  hidden={hidden}
+                  className="text-3xl font-semibold tabular-nums"
+                >
+                  {/*
+                    The control masks its own label. It wraps the real figure
+                    because that is what it operates on, and a toggle left showing
+                    it would be the one unmasked number on a page that claims the
+                    rest are hidden.
+                  */}
+                  <Amount value={netWorth.netWorth} hidden={hidden} />
+                </BalanceVisibilityToggle>
               </div>
               <dl className="flex gap-5 text-sm">
                 <div>
                   <dt className="text-xs text-neutral-500">Cash</dt>
                   <dd className="tabular-nums">
-                    {formatCurrency(netWorth.cash + netWorth.other)}
+                    <Amount
+                      value={netWorth.cash + netWorth.other}
+                      hidden={hidden}
+                    />
                   </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-neutral-500">Investments</dt>
                   <dd className="tabular-nums">
-                    {formatCurrency(netWorth.investments)}
+                    <Amount value={netWorth.investments} hidden={hidden} />
                   </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-neutral-500">Debt</dt>
                   <dd className="tabular-nums">
-                    {formatCurrency(netWorth.creditCards + netWorth.loans)}
+                    <Amount
+                      value={netWorth.creditCards + netWorth.loans}
+                      hidden={hidden}
+                    />
                   </dd>
                 </div>
               </dl>
@@ -213,6 +244,7 @@ export default async function DashboardPage() {
                 }))}
                 label="Net worth"
                 changeBasis="day"
+                hidden={hidden}
               />
             </div>
           </section>
@@ -260,6 +292,7 @@ export default async function DashboardPage() {
                 slices={visibleComposition}
                 centerValue={netWorth.netWorth}
                 centerLabel="net worth"
+                hidden={hidden}
               />
             </section>
           </div>
@@ -312,7 +345,7 @@ export default async function DashboardPage() {
                           </span>
                         </span>
                         <span className="shrink-0 text-sm tabular-nums">
-                          {formatCurrency(Number(loan.balance))}
+                          <Amount value={Number(loan.balance)} hidden={hidden} />
                         </span>
                       </Link>
                     </li>

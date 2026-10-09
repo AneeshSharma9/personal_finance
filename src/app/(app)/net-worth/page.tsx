@@ -9,6 +9,8 @@ import {
   resolveAccountChange,
 } from "@/lib/change-period";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
+import { balancesHidden } from "@/lib/privacy";
 import {
   getAccountChanges,
   getAccounts,
@@ -19,6 +21,8 @@ import {
   getNetWorthHistory,
 } from "@/lib/queries";
 import { AccountChangeList } from "@/components/account-change-list";
+import { Amount } from "@/components/amount";
+import { BalanceVisibilityToggle } from "@/components/balance-visibility-toggle";
 import { ChangePeriodPicker } from "@/components/change-period";
 import { HoldingsList } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
@@ -44,6 +48,7 @@ export default async function NetWorthPage({
   const user = await requireUser();
   const params = await searchParams;
   const period = parseChartPeriod(params.change);
+  const hidden = await balancesHidden();
 
   /*
    * One bound for both the chart and the breakdown below it.
@@ -82,16 +87,22 @@ export default async function NetWorthPage({
     <div className="mx-auto max-w-3xl space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Net worth</h1>
-        <p className="text-sm text-neutral-500">
-          {formatCurrency(netWorth.netWorth)}
-        </p>
+        {/*
+          The same toggle the dashboard's headline uses. Two pages show a net worth
+          headline, and leaving one of them without the control would mean the
+          feature is only reachable from the dashboard - including from here,
+          where you have just come to hide the number.
+        */}
+        <BalanceVisibilityToggle hidden={hidden} className="text-sm">
+          <Amount value={netWorth.netWorth} hidden={hidden} />
+        </BalanceVisibilityToggle>
       </header>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Assets" value={netWorth.assets} />
-        <Stat label="Liabilities" value={netWorth.liabilities} />
-        <Stat label="Cash" value={netWorth.cash + netWorth.other} />
-        <Stat label="Investments" value={netWorth.investments} />
+        <Stat label="Assets" value={netWorth.assets} hidden={hidden} />
+        <Stat label="Liabilities" value={netWorth.liabilities} hidden={hidden} />
+        <Stat label="Cash" value={netWorth.cash + netWorth.other} hidden={hidden} />
+        <Stat label="Investments" value={netWorth.investments} hidden={hidden} />
       </section>
 
       <section>
@@ -124,6 +135,7 @@ export default async function NetWorthPage({
               }))}
               label="Net worth"
               changeBasis={period.basis}
+              hidden={hidden}
             />
             <p className="mt-2 text-xs text-neutral-500">
               {history.length === 1
@@ -155,6 +167,7 @@ export default async function NetWorthPage({
               rows={accountChanges.map((row) =>
                 resolveAccountChange(row, period),
               )}
+              hidden={hidden}
             />
           </div>
         ) : null}
@@ -163,19 +176,29 @@ export default async function NetWorthPage({
       <section>
         <h2 className="mb-2 text-sm font-medium text-neutral-500">Breakdown</h2>
         <dl className="space-y-1 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
-          <Row label="Cash and checking" value={netWorth.cash} />
-          <Row label="Other asset accounts" value={netWorth.other} />
+          <Row label="Cash and checking" value={netWorth.cash} hidden={hidden} />
+          <Row
+            label="Other asset accounts"
+            value={netWorth.other}
+            hidden={hidden}
+          />
           <Row
             label="Investments (holdings value)"
             value={netWorth.investments}
+            hidden={hidden}
           />
           {/*
             Just the total here. Holdings are listed per account in the Holdings
             section further down, so repeating the same split in both places is
             noise rather than information.
           */}
-          <Row label="Credit cards" value={netWorth.creditCards} negative />
-          <Row label="Loans" value={netWorth.loans} negative />
+          <Row
+            label="Credit cards"
+            value={netWorth.creditCards}
+            hidden={hidden}
+            negative
+          />
+          <Row label="Loans" value={netWorth.loans} hidden={hidden} negative />
       {/*
         Manual assets and liabilities are hidden rather than shown as $0.00.
         `manual_accounts` has no write path yet - no route, no insert anywhere -
@@ -185,7 +208,7 @@ export default async function NetWorthPage({
         the feature can be revived without a migration.
       */}
           <div className="border-t border-neutral-200 pt-1 font-medium dark:border-neutral-800">
-            <Row label="Net worth" value={netWorth.netWorth} strong />
+            <Row label="Net worth" value={netWorth.netWorth} hidden={hidden} strong />
           </div>
         </dl>
       </section>
@@ -208,8 +231,9 @@ export default async function NetWorthPage({
                     ? ` · ${Number(liability.apr).toFixed(2)}% APR`
                     : ""}
                   {liability.minimumPayment
-                    ? ` · min ${formatCurrency(
-                        Number(liability.minimumPayment),
+                    ? ` · min ${amountFor(
+                        formatCurrency(Number(liability.minimumPayment)),
+                        hidden,
                       )}`
                     : ""}
                   {liability.nextDueDate
@@ -222,7 +246,9 @@ export default async function NetWorthPage({
         </section>
       ) : null}
 
-      {holdings.length > 0 ? <HoldingsList holdings={holdings} /> : null}
+      {holdings.length > 0 ? (
+        <HoldingsList holdings={holdings} hidden={hidden} />
+      ) : null}
 
       {manual.length > 0 ? (
         <section>
@@ -243,7 +269,7 @@ export default async function NetWorthPage({
                   </p>
                 </div>
                 <p className="shrink-0 tabular-nums">
-                  {formatCurrency(Number(account.value))}
+                  <Amount value={Number(account.value)} hidden={hidden} />
                 </p>
               </li>
             ))}
@@ -260,12 +286,20 @@ export default async function NetWorthPage({
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({
+  label,
+  value,
+  hidden,
+}: {
+  label: string;
+  value: number;
+  hidden: boolean;
+}) {
   return (
     <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
       <p className="text-xs text-neutral-500">{label}</p>
       <p className="mt-0.5 font-medium tabular-nums">
-        {formatCurrency(value, { compact: true })}
+        <Amount value={value} hidden={hidden} compact />
       </p>
     </div>
   );
@@ -274,11 +308,13 @@ function Stat({ label, value }: { label: string; value: number }) {
 function Row({
   label,
   value,
+  hidden,
   strong = false,
   negative = false,
 }: {
   label: string;
   value: number;
+  hidden: boolean;
   strong?: boolean;
   negative?: boolean;
 }) {
@@ -293,7 +329,7 @@ function Row({
       </dt>
       <dd className="tabular-nums">
         {negative && value > 0 ? "-" : ""}
-        {formatCurrency(value)}
+        <Amount value={value} hidden={hidden} />
       </dd>
     </div>
   );

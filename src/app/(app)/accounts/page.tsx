@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Amount } from "@/components/amount";
 import { requireUser } from "@/lib/auth";
 import {
   changePeriodFrom,
   parseChangePeriod,
   resolveAccountChange,
 } from "@/lib/change-period";
-import { formatCurrency, formatRelativeTime } from "@/lib/format";
+import { formatRelativeTime } from "@/lib/format";
+import { balancesHidden } from "@/lib/privacy";
 import {
   accruedInterest,
   payoffProgress,
@@ -42,6 +44,9 @@ export default async function AccountsPage({
 }: PageProps<"/accounts">) {
   const user = await requireUser();
   const params = await searchParams;
+
+  /* One read for the whole page; every balance below is decided by this. */
+  const hidden = await balancesHidden();
 
   /*
    * Unlike the dashboard, the period here is chosen rather than assumed. The
@@ -82,7 +87,8 @@ export default async function AccountsPage({
           <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
           <p className="text-sm text-neutral-500">
             {accounts.length} account{accounts.length === 1 ? "" : "s"} · net
-            worth {formatCurrency(netWorth.netWorth)}
+            worth{" "}
+            <Amount value={netWorth.netWorth} hidden={hidden} />
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -208,7 +214,7 @@ export default async function AccountsPage({
                     </p>
                   </div>
                   <p className="shrink-0 font-medium tabular-nums">
-                    {formatCurrency(Number(account.currentBalance))}
+                    <Amount value={Number(account.currentBalance)} hidden={hidden} />
                   </p>
                 </Link>
               </li>
@@ -217,7 +223,7 @@ export default async function AccountsPage({
         </section>
       ) : null}
 
-      <ManualLoans initialLoans={manualLoans} />
+      <ManualLoans initialLoans={manualLoans} hidden={hidden} />
 
       {groups.map((group) => (
         <section key={group.title}>
@@ -248,7 +254,7 @@ export default async function AccountsPage({
                     </p>
                   </div>
                   <p className="shrink-0 font-medium tabular-nums">
-                    {formatCurrency(Number(account.currentBalance))}
+                    <Amount value={Number(account.currentBalance)} hidden={hidden} />
                   </p>
                 </Link>
               </li>
@@ -276,6 +282,7 @@ export default async function AccountsPage({
           </header>
           <AccountChangeList
             rows={accountChanges.map((row) => resolveAccountChange(row, period))}
+            hidden={hidden}
             // The lists above already link every account to its own page; making
             // these rows links too would repeat the same destination three times
             // on one page. On /net-worth, which has no account list, they do.
@@ -288,12 +295,12 @@ export default async function AccountsPage({
         <section className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
           <h2 className="mb-2 text-sm font-medium text-neutral-500">Totals</h2>
           <dl className="space-y-1 text-sm">
-            <Row label="Cash" value={netWorth.cash + netWorth.other} />
-            <Row label="Investments" value={netWorth.investments} />
-            <Row label="Credit cards" value={netWorth.creditCards} />
-            <Row label="Loans" value={netWorth.loans} />
+            <Row label="Cash" value={netWorth.cash + netWorth.other} hidden={hidden} />
+            <Row label="Investments" value={netWorth.investments} hidden={hidden} />
+            <Row label="Credit cards" value={netWorth.creditCards} hidden={hidden} />
+            <Row label="Loans" value={netWorth.loans} hidden={hidden} />
             <div className="border-t border-neutral-200 pt-1 font-medium dark:border-neutral-800">
-              <Row label="Net worth" value={netWorth.netWorth} strong />
+              <Row label="Net worth" value={netWorth.netWorth} hidden={hidden} strong />
             </div>
           </dl>
         </section>
@@ -305,10 +312,12 @@ export default async function AccountsPage({
 function Row({
   label,
   value,
+  hidden,
   strong = false,
 }: {
   label: string;
   value: number;
+  hidden: boolean;
   strong?: boolean;
 }) {
   return (
@@ -320,7 +329,9 @@ function Row({
       >
         {label}
       </dt>
-      <dd className="tabular-nums">{formatCurrency(value)}</dd>
+      <dd className="tabular-nums">
+          <Amount value={value} hidden={hidden} />
+        </dd>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
 import { selectAllProps } from "@/lib/select-all";
 
 /**
@@ -64,7 +65,13 @@ const KINDS = [
   { value: "other", label: "Other" },
 ] as const;
 
-export function ManualLoans({ initialLoans }: { initialLoans: ManualLoan[] }) {
+export function ManualLoans({
+  initialLoans,
+  hidden,
+}: {
+  initialLoans: ManualLoan[];
+  hidden: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +140,7 @@ export function ManualLoans({ initialLoans }: { initialLoans: ManualLoan[] }) {
       */}
       <ul className="divide-y divide-neutral-100 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {initialLoans.map((loan) => (
-          <LoanCard key={loan.id} loan={loan} />
+          <LoanCard key={loan.id} loan={loan} hidden={hidden} />
         ))}
       </ul>
     </section>
@@ -254,8 +261,10 @@ function LoanForm({
 
 function LoanCard({
   loan,
+  hidden,
 }: {
   loan: ManualLoan;
+  hidden: boolean;
 }) {
   return (
     <li>
@@ -279,7 +288,7 @@ function LoanCard({
           <p className="truncate text-xs text-neutral-500">
             {formatPercent(loan.apr)} APR
             {loan.paymentAmount !== null
-              ? ` · ${formatCurrency(loan.paymentAmount)}/mo`
+              ? ` · ${amountFor(formatCurrency(loan.paymentAmount), hidden)}/mo`
               : ""}
             {loan.progress !== null
               ? ` · ${loan.progress.toFixed(0)}% paid`
@@ -291,10 +300,10 @@ function LoanCard({
         </div>
         <div className="shrink-0 text-right">
           <p className="font-medium tabular-nums">
-            {formatCurrency(loan.balance)}
+            {amountFor(formatCurrency(loan.balance), hidden)}
           </p>
           <p className="text-xs text-neutral-500">
-            of {formatCurrency(loan.principal)} borrowed
+            of {amountFor(formatCurrency(loan.principal), hidden)} borrowed
           </p>
         </div>
       </Link>

@@ -1,4 +1,5 @@
 import { formatCurrency } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
 
 /**
  * A donut of what you own against what you owe, with net worth in the middle.
@@ -20,13 +21,25 @@ export function Donut({
   slices,
   centerValue,
   centerLabel,
+  hidden = false,
 }: {
   slices: { key: string; label: string; value: number; color: string }[];
   /** The figure the slices add up to, e.g. net worth. */
   centerValue: number;
   centerLabel: string;
+  /**
+   * Mask the centre figure, the legend and the accessible names.
+   *
+   * The arcs keep their proportions, which is the same line the trend chart draws:
+   * what is masked is the numbers, not the shape. A share of the whole is not a
+   * balance, but it is a balance once you know the total - and the centre figure
+   * is the total.
+   */
+  hidden?: boolean;
 }) {
   const total = slices.reduce((sum, slice) => sum + slice.value, 0);
+  const money = (value: number, compact = false) =>
+    amountFor(formatCurrency(value, { compact }), hidden);
 
   if (total === 0) {
     return (
@@ -70,7 +83,7 @@ export function Donut({
         className="h-40 w-40 shrink-0"
         role="img"
         aria-label={`${centerLabel}: ${slices
-          .map((slice) => `${slice.label} ${formatCurrency(slice.value)}`)
+          .map((slice) => `${slice.label} ${money(slice.value)}`)
           .join(", ")}`}
       >
         {/* Rotate so the first slice starts at 12 o'clock, not 3. */}
@@ -95,7 +108,7 @@ export function Donut({
           textAnchor="middle"
           className="fill-neutral-900 text-[15px] font-semibold dark:fill-neutral-100"
         >
-          {formatCurrency(centerValue, { compact: true })}
+          {money(centerValue, true)}
         </text>
         <text
           x={size / 2}
@@ -119,7 +132,7 @@ export function Donut({
               />
               <span className="min-w-0 flex-1 truncate">{slice.label}</span>
               <span className="shrink-0 tabular-nums text-neutral-600 dark:text-neutral-400">
-                {formatCurrency(slice.value)}
+                {money(slice.value)}
               </span>
             </li>
           ))}

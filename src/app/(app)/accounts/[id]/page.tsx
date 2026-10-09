@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { AccountNameEditor } from "@/components/account-rename";
+import { Amount } from "@/components/amount";
 import { BackLink } from "@/components/back-link";
 import { HoldingsTable, totalValue } from "@/components/holdings-list";
 import { TrendChart } from "@/components/trend-chart";
 import { RemoveAccountButton } from "@/components/unlink-controls";
 import { isRenamedName } from "@/lib/account-name";
 import { requireUser } from "@/lib/auth";
+import { balancesHidden } from "@/lib/privacy";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
 import {
   getAccountBalanceHistory,
   getAccountForUser,
@@ -45,10 +48,11 @@ export default async function AccountPage({
   // indistinguishable from one that does not exist.
   if (!account) return <NotFound />;
 
-  const [history, holdings, transactionCounts] = await Promise.all([
+  const [history, holdings, transactionCounts, hidden] = await Promise.all([
     getAccountBalanceHistory(user.id, accountId),
     getHoldings(user.id),
     getTransactionCountsByAccount(user.id),
+    balancesHidden(),
   ]);
 
   const balance = Number(account.currentBalance);
@@ -96,7 +100,7 @@ export default async function AccountPage({
           </div>
           <div className="text-right">
             <p className="text-xl font-semibold tabular-nums">
-              {formatCurrency(balance)}
+              <Amount value={balance} hidden={hidden} />
             </p>
             {/*
               A credit or loan balance is money owed, so it is labelled as such
@@ -127,6 +131,7 @@ export default async function AccountPage({
               points={history}
               label={isLiability ? "Balance owed" : "Balance"}
               risingIsGood={!isLiability}
+              hidden={hidden}
             />
             <p className="mt-2 text-xs text-neutral-500">
               {history.length === 1
@@ -152,10 +157,10 @@ export default async function AccountPage({
           <header className="mb-2 flex items-baseline justify-between gap-3">
             <h2 className="text-sm font-medium text-neutral-500">Holdings</h2>
             <p className="text-xs tabular-nums text-neutral-500">
-              {formatCurrency(totalValue(accountHoldings))}
+              <Amount value={totalValue(accountHoldings)} hidden={hidden} />
             </p>
           </header>
-          <HoldingsTable rows={accountHoldings} />
+          <HoldingsTable rows={accountHoldings} hidden={hidden} />
           {/*
             The total is the sum of what the positions are worth; the balance in
             the header is what the institution reported for the whole account.
@@ -205,7 +210,7 @@ export default async function AccountPage({
           ? `last updated ${formatDate(account.balanceUpdatedAt.toISOString().slice(0, 10))}`
           : "not yet dated"}
         {account.availableBalance !== null
-          ? ` · ${formatCurrency(Number(account.availableBalance))} available`
+          ? ` · ${amountFor(formatCurrency(Number(account.availableBalance)), hidden)} available`
           : ""}
         . Balances are reported by the institution, not this app.
       </p>

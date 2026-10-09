@@ -1,9 +1,11 @@
 import Link from "next/link";
 
 import { AccountName } from "@/components/account-name";
+import { Amount } from "@/components/amount";
 import { TapToRevealName } from "@/components/account-rename";
 import { splitByLiability, type ResolvedAccountChange } from "@/lib/change-period";
 import { isRenamedName } from "@/lib/account-name";
+import { amountFor } from "@/lib/mask";
 import { formatCurrency, formatDate } from "@/lib/format";
 
 /**
@@ -33,9 +35,11 @@ export function AccountChangeList({
   rows,
   /** False where the page already links every account to its own page. */
   linkToAccounts = true,
+  hidden,
 }: {
   rows: ResolvedAccountChange[];
   linkToAccounts?: boolean;
+  hidden: boolean;
 }) {
   if (rows.length === 0) {
     return <p className="text-sm text-neutral-500">No accounts to break down.</p>;
@@ -60,6 +64,7 @@ export function AccountChangeList({
                   key={row.accountId}
                   row={row}
                   linkToAccount={linkToAccounts}
+                  hidden={hidden}
                 />
               ))}
             </ul>
@@ -77,9 +82,11 @@ export function AccountChangeList({
 function Row({
   row,
   linkToAccount,
+  hidden,
 }: {
   row: ResolvedAccountChange;
   linkToAccount: boolean;
+  hidden: boolean;
 }) {
   const body = (
     <>
@@ -104,7 +111,11 @@ function Row({
       )}
       <span className="shrink-0 text-right">
         <span className="block text-sm font-medium tabular-nums">
-          {row.latest === null ? "—" : formatCurrency(row.latest.value)}
+          {row.latest === null ? (
+            "—"
+          ) : (
+            <Amount value={row.latest.value} hidden={hidden} />
+          )}
         </span>
         <span
           className={`block text-xs tabular-nums ${
@@ -115,7 +126,7 @@ function Row({
                 : "text-red-700 dark:text-red-400"
           }`}
         >
-          {changeLabel(row)}
+          {changeLabel(row, hidden)}
         </span>
       </span>
     </>
@@ -135,12 +146,12 @@ function Row({
         <Link
           href={`/accounts/${row.accountId}`}
           className={classes}
-          title={rowTitle(row)}
+          title={rowTitle(row, hidden)}
         >
           {body}
         </Link>
       ) : (
-        <div className={classes} title={rowTitle(row)}>
+        <div className={classes} title={rowTitle(row, hidden)}>
           {body}
         </div>
       )}
@@ -149,26 +160,34 @@ function Row({
 }
 
 /** "+$120.55 since Oct 6", or why there isn't one. */
-function changeLabel(row: ResolvedAccountChange): string {
+function changeLabel(row: ResolvedAccountChange, hidden: boolean): string {
   if (row.change === null || row.from === null) {
     return row.latest === null
       ? "not recorded yet"
       : "nothing to compare against";
   }
   const sign = row.change >= 0 ? "+" : "";
-  return `${sign}${formatCurrency(row.change)} since ${formatDate(row.from.date)}`;
+  const amount = <Amount value={row.change} hidden={hidden} showSign={row.change > 0} />;
+  return `${sign}${amount} since ${formatDate(row.from.date)}`;
 }
 
-/** The full record behind a row: what is held, and what it was measured against. */
-function rowTitle(row: ResolvedAccountChange): string {
+/**
+ * The full record behind a row: what is held, and what it was measured against.
+ *
+ * Masked like the row itself. The tooltip is the easiest figure on the page to
+ * miss when hiding balances - it is invisible until a hover - so leaving it in
+ * plain text would hand over exactly the per-account number the mask is for.
+ */
+function rowTitle(row: ResolvedAccountChange, hidden: boolean): string {
+  const amount = (value: number) => amountFor(formatCurrency(value), hidden);
   const balance =
     row.latest === null
       ? "no balance recorded"
-      : `${formatCurrency(row.latest.value)} recorded ${formatDate(row.latest.date)}`;
+      : `${amount(row.latest.value)} recorded ${formatDate(row.latest.date)}`;
   const change =
     row.change === null || row.from === null
       ? "no earlier reading to compare against"
-      : `${row.change >= 0 ? "+" : ""}${formatCurrency(row.change)} since ${formatDate(
+      : `${row.change >= 0 ? "+" : ""}${amount(row.change)} since ${formatDate(
           row.from.date,
         )}`;
   // A renamed account's row would otherwise name the account by a name the bank

@@ -10,6 +10,7 @@ import { TooltipWithBounds } from "@visx/tooltip";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { formatCurrency, formatDate } from "@/lib/format";
+import { amountFor } from "@/lib/mask";
 import {
   nearestIndex,
   seriesChangeAt,
@@ -70,12 +71,32 @@ export function TrendChart({
    * default basis the two are the same number anyway.
    */
   changeBasis = "period",
+  /**
+   * Mask the figures this chart prints.
+   *
+   * Optional and defaulting to false, because not every use of this component is
+   * a balance: it also plots cash flow and budget plans, which are spending
+   * rather than net worth and are outside what the hide-balances preference
+   * covers. A required prop would force those callers to read a cookie they have
+   * no other reason to care about.
+   *
+   * Masking the numbers does not hide the *shape* of the line, and it cannot
+   * without making the chart useless. Someone already looking at your screen can
+   * see that something rose and by roughly how much; what they cannot read is a
+   * balance. That is the line this feature draws, and it is worth stating plainly
+   * rather than implying the chart is fully covered.
+   */
+  hidden = false,
 }: {
   points: SeriesPoint[];
   label: string;
   risingIsGood?: boolean;
   changeBasis?: ChangeBasis;
+  hidden?: boolean;
 }) {
+  /** One place to format, so no readout can forget the flag. */
+  const money = (value: number, compact = false) =>
+    amountFor(formatCurrency(value, { compact }), hidden);
   const gradientId = useId();
   const { ref, width } = useMeasuredWidth(680);
 
@@ -238,7 +259,7 @@ export function TrendChart({
         width={width}
         height={height}
         role="img"
-        aria-label={`${label} from ${first.date} to ${last.date}, currently ${formatCurrency(
+        aria-label={`${label} from ${first.date} to ${last.date}, currently ${money(
           last.value,
         )}. Use the left and right arrow keys to read each day.`}
         // Focusable so the series can be read without a mouse. The hover
@@ -365,7 +386,7 @@ onBlur={() => setActiveIndex(null)}
             numTicks={4}
             hideAxisLine
             hideTicks
-            tickFormat={(value) => formatCurrency(Number(value), { compact: true })}
+            tickFormat={(value) => money(Number(value), true)}
             tickLabelProps={() => ({
               fill: "currentColor",
               fontSize: 10,
@@ -418,7 +439,7 @@ onBlur={() => setActiveIndex(null)}
             {formatDate(active.date)}
           </p>
           <p className="tabular-nums text-neutral-600 dark:text-neutral-300">
-            {formatCurrency(active.value)}
+            {money(active.value)}
           </p>
           {/*
             Measured against the reading before the one being inspected, on the
@@ -434,7 +455,7 @@ onBlur={() => setActiveIndex(null)}
               }`}
             >
               {activeChange.change >= 0 ? "+" : ""}
-              {formatCurrency(activeChange.change)} since{" "}
+              {money(activeChange.change)} since{" "}
               {formatDate(activeChange.from.date)}
             </p>
           )}
@@ -451,7 +472,7 @@ onBlur={() => setActiveIndex(null)}
         <p className="mt-1 text-sm">
           <span className={TONE_CLASS[reportedTone]}>
             {reported.change >= 0 ? "+" : ""}
-            {formatCurrency(reported.change)}
+            {money(reported.change)}
           </span>{" "}
           <span className="text-neutral-500">
             {changeBasis === "day"

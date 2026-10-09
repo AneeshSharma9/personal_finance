@@ -1,4 +1,4 @@
-import { formatCurrency } from "@/lib/format";
+import { Amount } from "@/components/amount";
 import type { HoldingWithDetails } from "@/lib/queries";
 
 /**
@@ -17,8 +17,10 @@ import type { HoldingWithDetails } from "@/lib/queries";
  */
 export function HoldingsList({
   holdings,
+  hidden,
 }: {
   holdings: HoldingWithDetails[];
+  hidden: boolean;
 }) {
   const groups = new Map<number, { name: string; rows: HoldingWithDetails[] }>();
 
@@ -49,7 +51,7 @@ export function HoldingsList({
       <header className="mb-2 flex items-baseline justify-between gap-3">
         <h2 className="text-sm font-medium text-neutral-500">Holdings</h2>
         <p className="text-xs tabular-nums text-neutral-500">
-          {formatCurrency(grandTotal)}
+          <Amount value={grandTotal} hidden={hidden} />
         </p>
       </header>
 
@@ -59,11 +61,11 @@ export function HoldingsList({
             <div className="mb-1 flex items-baseline justify-between gap-3">
               <h3 className="truncate text-sm font-medium">{section.name}</h3>
               <p className="shrink-0 text-xs tabular-nums text-neutral-500">
-                {formatCurrency(section.total)}
+                <Amount value={section.total} hidden={hidden} />
               </p>
             </div>
 
-            <HoldingsTable rows={section.rows} />
+            <HoldingsTable rows={section.rows} hidden={hidden} />
           </div>
         ))}
       </div>
@@ -78,7 +80,13 @@ export function HoldingsList({
  * presenting the table, and on a single account's page all three are already on
  * screen. What is left is the part that is unique to each holding.
  */
-export function HoldingsTable({ rows }: { rows: HoldingWithDetails[] }) {
+export function HoldingsTable({
+  rows,
+  hidden,
+}: {
+  rows: HoldingWithDetails[];
+  hidden: boolean;
+}) {
   if (rows.length === 0) return null;
 
   return (
@@ -98,9 +106,11 @@ export function HoldingsTable({ rows }: { rows: HoldingWithDetails[] }) {
             </p>
           </div>
           <p className="shrink-0 tabular-nums">
-            {holding.institutionValue !== null
-              ? formatCurrency(holding.institutionValue)
-              : "-"}
+            {holding.institutionValue === null ? (
+              "-"
+            ) : (
+              <Amount value={holding.institutionValue} hidden={hidden} />
+            )}
           </p>
         </li>
       ))}
