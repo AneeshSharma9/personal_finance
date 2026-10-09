@@ -15,7 +15,13 @@ export const metadata: Metadata = {
     title: "Finance",
     capable: true,
     statusBarStyle: "default",
-    startupImage: "/apple-touch-icon.png",
+    /*
+     * No `startupImage`. It was set to `/apple-touch-icon.png`, which emitted
+     * `<link rel="apple-touch-startup-image">` pointing at a 180x180 icon: a
+     * launch image is a full-bleed splash sized to the device, so this would be
+     * stretched to fill the screen on some devices. The icon has its own
+     * `apple` entry below and needs no launch image - the page paints fast enough.
+     */
   },
   /*
     * `favicon.ico` is deliberately absent from this list.
