@@ -18,8 +18,10 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: "#ffffff",
-    theme_color: "#ffffff",
+    // Matches the icon background (#0a0a0a). Both default to white, which made
+    // the launch screen flash white before a dark-themed page appeared.
+    background_color: "#0a0a0a",
+    theme_color: "#0a0a0a",
     icons: [
       {
         src: "/icon-192.png",

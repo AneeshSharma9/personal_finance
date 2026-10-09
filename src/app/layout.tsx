@@ -17,10 +17,19 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
     startupImage: "/apple-touch-icon.png",
   },
+  /*
+    * `favicon.ico` is deliberately absent from this list.
+    *
+    * An `app/favicon.ico` is injected by Next.js ahead of anything declared here,
+    * so the Vercel placeholder that ships with a new project was being served as
+    * the first `rel="icon"` and winning. It has been replaced with the real mark,
+    * but leaving it out here documents that `favicon.ico` is the one that decides
+    * the tab icon and adding it back would be a second, redundant declaration.
+    */
   icons: {
     icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
     ],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
   },
