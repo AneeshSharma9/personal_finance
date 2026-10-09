@@ -9,7 +9,13 @@ import {
   formatCurrencyInput,
   parseCurrencyInput,
 } from "@/lib/format";
-import { columnTone, columnValue, type Column } from "@/lib/budget-columns";
+import {
+  columnOverBudget,
+  columnTone,
+  columnValue,
+  type Column,
+  type ColumnRow,
+} from "@/lib/budget-columns";
 import { SectionHeader } from "@/components/section-header";
 import { selectAllProps } from "@/lib/select-all";
 
@@ -115,8 +121,34 @@ export function BudgetEditor({
     });
 
 
-  const spendingActual = totals.basicsActual + totals.categoriesActual;
-  const overSpending = spendingActual > totals.spendingBudget;
+  /*
+   * The month's verdict, in whichever column is showing.
+   *
+   * Both figures come from `column` rather than being hardcoded to Actual. The
+   * footer used to render `spendingActual` unconditionally, so toggling to
+   * Remaining switched all three tables and left the one number that judges the
+   * month still reporting the other one — the worst place on the page to have a
+   * stale figure, because it is the one carrying the red/green verdict.
+   *
+   * The whole month's spending is expressed as a single `ColumnRow` and read
+   * through the same two helpers the tables use, so the figure and its judgement
+   * cannot drift apart from the rows above them.
+   */
+  const spending: ColumnRow = {
+    actual: totals.basicsActual + totals.categoriesActual,
+    // Exact, not an approximation: `spendingBudget` is the sum of those same
+    // rows' budgeted amounts, so this is the sum of their remainders by
+    // construction — no second pass over the rows.
+    remaining:
+      totals.spendingBudget - (totals.basicsActual + totals.categoriesActual),
+    budgeted: totals.spendingBudget,
+    kind: "basic",
+  };
+  const overSpending = columnOverBudget(
+    spending.actual,
+    spending.budgeted,
+    column,
+  );
 
   return (
     <div className="space-y-8">
@@ -175,11 +207,15 @@ export function BudgetEditor({
       />
 
       {/*
-        The month's verdict. The Actual turns red when spending has passed the
+        The month's verdict. The figure turns red once spending has passed the
         total budgeted, which is the one number on the page that says whether the
         month worked. It did not before: the figure was rendered in the same
         muted grey whether it was 40% or 140% of budget, so overspending had to
         be spotted by comparing two numbers by eye.
+
+        The budgeted figure on the left is the same in both columns — it is the
+        limit, not a measurement — so only the right-hand figure follows the
+        toggle.
       */}
       <div
         className={`flex items-center justify-between rounded-lg border px-4 py-3 ${
@@ -198,7 +234,7 @@ export function BudgetEditor({
                 : "text-neutral-500"
             }
           >
-            {formatCurrency(spendingActual)}
+            {formatCurrency(columnValue(spending, column))}
           </span>
         </span>
       </div>

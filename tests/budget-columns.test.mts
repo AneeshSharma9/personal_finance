@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { columnTone, columnValue, type ColumnRow } from "@/lib/budget-columns";
+import {
+  columnOverBudget,
+  columnTone,
+  columnValue,
+  type ColumnRow,
+} from "@/lib/budget-columns";
 
 /**
  * The Actual / Remaining toggle.
@@ -105,4 +110,55 @@ test("negative remaining is shown signed, so it is legible without colour", () =
   }).format(columnValue(over, "remaining"));
 
   assert.ok(formatted.startsWith("-"), `expected a leading minus, got ${formatted}`);
+});
+
+/**
+ * The aggregate rule, and the bug it exists because of.
+ *
+ * The Spending Budget footer hardcoded `spendingActual` while every table above it
+ * followed the toggle, so switching to Remaining left the one figure that carries
+ * the red/green verdict still reporting Actual. Nothing below would have caught
+ * that: the tables were right, and `columnTone` was right — only the footer was
+ * outside the shared rule, which is why the fix pulls it *into* `columnOverBudget`
+ * rather than adding a second `column === "remaining"` ternary at the call site.
+ */
+test("the aggregate comparison agrees with the row one in both columns", () => {
+  for (const [actual, budgeted] of [
+    [620, 500],
+    [320, 500],
+    [500, 500],
+    [0, 0],
+  ] as const) {
+    const remaining = budgeted - actual;
+    for (const column of ["actual", "remaining"] as const) {
+      assert.equal(
+        columnOverBudget(actual, budgeted, column),
+        columnTone(row({ actual, remaining, budgeted, kind: "category" }), column) === "bad",
+        `aggregate and row disagree at actual=${actual} budgeted=${budgeted} in ${column}`,
+      );
+    }
+  }
+});
+
+test("the aggregate rule has no zero-budget guard, and that is deliberate", () => {
+  /*
+   * `columnTone` refuses to flag a bucket with no limit set, so a page with half
+   * its buckets unallocated does not come back mostly red. That guard is
+   * wrong for the month's total: spending money against a budget of nothing is
+   * exactly the thing the footer exists to flag, and the footer was already
+   * doing so before this was extracted. Hence two entry points rather than one
+   * function with a flag.
+   */
+  assert.equal(columnOverBudget(87.4, 0, "actual"), true);
+  assert.equal(columnOverBudget(87.4, 0, "remaining"), true);
+  assert.equal(
+    columnTone(row({ budgeted: 0, actual: 87.4, remaining: -87.4 }), "actual"),
+    "",
+    "a single unbudgeted bucket is still never flagged",
+  );
+});
+
+test("a zero budget with no spending is not flagged either way", () => {
+  assert.equal(columnOverBudget(0, 0, "actual"), false);
+  assert.equal(columnOverBudget(0, 0, "remaining"), false);
 });

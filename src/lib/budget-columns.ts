@@ -30,13 +30,31 @@ export function columnValue(row: ColumnRow, column: Column): number {
 }
 
 /**
- * Whether a row is flagged, in whichever column is showing.
+ * Whether a figure is past its budget, in whichever column is showing.
  *
  * The comparison inverts between the two: in Remaining mode a negative *is* the
- * overage, where in Actual mode it is being under. Deriving one flag from the other
- * is what keeps the columns from disagreeing about which rows are in trouble — and
- * they have to agree, because a red figure under Remaining is exactly a red figure
- * under Actual, said the other way round.
+ * overage, where in Actual mode it is being under. Deriving one from the other is
+ * what keeps the columns from disagreeing about which figures are in trouble —
+ * and they have to agree, because a red figure under Remaining is exactly a red
+ * figure under Actual, said the other way round.
+ *
+ * Exported separately from {@link columnTone} because the month's own Spending
+ * Budget footer is the same judgement without the zero-budget guard: spending
+ * money against a budget of nothing is worth flagging, even though a single
+ * unbudgeted bucket is not. Route both through here rather than re-deriving the
+ * inversion at each call site — that duplication is how the footer ended up
+ * showing Actual while every table above it showed Remaining.
+ */
+export function columnOverBudget(
+  actual: number,
+  budgeted: number,
+  column: Column,
+): boolean {
+  return column === "remaining" ? budgeted - actual < 0 : actual > budgeted;
+}
+
+/**
+ * Whether a row is flagged, in whichever column is showing.
  *
  * Earnings stay right-way-up in both: coming in over target is good news, whether
  * that reads as an Actual above the budget or a positive Remaining.
@@ -47,8 +65,6 @@ export function columnValue(row: ColumnRow, column: Column): number {
  */
 export function columnTone(row: ColumnRow, column: Column): Tone {
   if (row.budgeted <= 0) return "";
-  const over =
-    column === "remaining" ? row.remaining < 0 : row.actual > row.budgeted;
-  if (!over) return "";
+  if (!columnOverBudget(row.actual, row.budgeted, column)) return "";
   return row.kind === "earning" ? "good" : "bad";
 }
