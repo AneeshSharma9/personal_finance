@@ -15,11 +15,27 @@ import { formatCurrency } from "@/lib/format";
  */
 
 test("every masked amount is the same five characters", () => {
-  assert.equal(HIDDEN_AMOUNT, "*****");
+  assert.equal(HIDDEN_AMOUNT, "✱✱✱✱✱");
   assert.equal(HIDDEN_AMOUNT.length, 5);
   for (const value of [0, 9.99, 4600, 1234567.89, -250.5, -1234567.89]) {
     assert.equal(amountFor(formatCurrency(value), true), HIDDEN_AMOUNT);
   }
+});
+
+test("the mask is five stars and nothing else", () => {
+  /*
+   * Worth pinning separately from "five characters", because the character is a
+   * choice and the choice has a reason that is easy to undo by accident: `*` is
+   * drawn near the cap height, so a row of them floats above the line it belongs
+   * to. `✱` sits on the baseline like the figures it replaces, within about 0.2px
+   * of where `$` lands at every size this app renders.
+   *
+   * Swapping back to `*` would pass every privacy test in this file - it is still
+   * five identical characters revealing nothing - while making the whole page look
+   * as though it drifted upward when balances are hidden.
+   */
+  assert.match(HIDDEN_AMOUNT, /^\u2731{5}$/, "five U+2731 EIGHT POINTED BLACK STARs");
+  assert.doesNotMatch(HIDDEN_AMOUNT, /\*/, "an asterisk floats above the line");
 });
 
 test("two different amounts cannot be told apart", () => {

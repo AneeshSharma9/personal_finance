@@ -166,9 +166,15 @@ function changeLabel(row: ResolvedAccountChange, hidden: boolean): string {
       ? "not recorded yet"
       : "nothing to compare against";
   }
-  const sign = row.change >= 0 ? "+" : "";
-  const amount = <Amount value={row.change} hidden={hidden} showSign={row.change > 0} />;
-  return `${sign}${amount} since ${formatDate(row.from.date)}`;
+  /*
+   * `showSign` alone, rather than a leading "+" of its own.
+   *
+   * `formatCurrency({ showSign })` already prefixes a positive figure, so adding
+   * one here as well printed "++$120.55" on every positive change - invisible in
+   * a test that checked the string contained the amount, and wrong on screen.
+   */
+  const amount = <Amount value={row.change} hidden={hidden} showSign />;
+  return `${amount} since ${formatDate(row.from.date)}`;
 }
 
 /**

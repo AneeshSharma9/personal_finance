@@ -26,11 +26,26 @@
 /**
  * What a hidden amount renders as.
  *
- * Five characters: long enough not to read as a placeholder or an error, short
- * enough to be obviously not a number. Exported so a test can assert against the
- * same literal rather than re-deriving it.
+ * Five of `U+2731 EIGHT POINTED BLACK STAR`, not five asterisks. The asterisk is
+ * the obvious choice and it is the wrong glyph: it is drawn near the cap height,
+ * so a row of them floats above the line it belongs to and the whole page appears
+ * to drift upward when balances are hidden. Fixing that needed a `translate-y`
+ * nudge, whose right value was a matter of guessing and which then had to be
+ * carried as a wrapper element.
+ *
+ * `✱` needs none of that. Measured against the alphabetic baseline at the three
+ * sizes this app renders figures at, the ink centre of `✱` lands within about
+ * 0.2px of where `$` sits - it is a glyph drawn to sit on the baseline, like the
+ * figures it replaces. The asterisk at the same size is 4.9px too high.
+ *
+ * So the mask is plain text again: no wrapper, no nudge, no arbitrary constant to
+ * keep in step with a font. Chosen on measurement rather than on how it looks,
+ * because "looks centred" and "is centred" diverge exactly where it matters.
+ *
+ * Exported so a test can assert against the same constant rather than re-deriving
+ * it.
  */
-export const HIDDEN_AMOUNT = "*****";
+export const HIDDEN_AMOUNT = "✱✱✱✱✱";
 
 /**
  * The formatted amount, or the mask.

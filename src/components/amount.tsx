@@ -5,11 +5,16 @@ import { formatCurrency } from "@/lib/format";
  * A currency figure that respects the hide-balances preference.
  *
  * Returns a **string**, not an element. That is deliberate: several call sites
- * compose around it - a leading minus for a liability, a `+` from
- * `formatCurrency({ showSign: true })`, a row whose value sits beside a label -
- * and an element would force a wrapper `<span>` into every one of them, changing
- * the markup of tables that other tests assert against. A string drops in where
+ * compose around it — a leading minus for a liability, a `+` from
+ * `formatCurrency({ showSign: true })`, a sentence built around it — and an element
+ * would force a wrapper `<span>` into every one of them, changing the markup of
+ * tables that other tests assert against. A string drops in where
  * `formatCurrency(...)` used to be and reads the same at the call site.
+ *
+ * It was an element for one commit, while the mask was a row of asterisks that
+ * needed a `translate-y` to stop floating above the line. `✱` needs no correction,
+ * so the wrapper went with it — see lib/mask.ts for the measurement that settled
+ * it.
  *
  * A server component, not a client one that subscribes to a store. That is the
  * whole reason the preference is a cookie: the server knows it, so the masked
