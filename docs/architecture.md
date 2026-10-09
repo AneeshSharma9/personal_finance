@@ -226,7 +226,10 @@ You're storing credentials-adjacent data, so do these from the start:
    - **Fallback A (simplest):** link accounts from a regular Safari tab, and use the PWA only for day-to-day viewing. You'll only link a handful of accounts ever.
    - **Fallback B:** Plaid's Hosted Link, where Plaid hosts the Link flow at a URL you open in the browser and your server learns the result via webhook. Check the current docs for setup.
 4. Your `redirect_uri` must be HTTPS and registered in the Plaid Dashboard.
-5. Native iOS (SwiftUI + Plaid iOS SDK, or React Native) comes later and reuses the same backend. Running your own build on your own phone is free via Xcode, but it needs re-signing about weekly; a $99/yr Apple Developer account removes that.
+5. **A home-screen app is not a browser tab, and the theme needs two mechanisms because of it.** An inline script in `layout.tsx` applies the theme before first paint — the only way to avoid a flash of the wrong theme. But closing the app and reopening it can restore the saved document rather than re-fetching it, and the restore can land with `<html>` missing the `dark` class that script added. Nothing noticed: `ThemeToggle` lives inside the user menu, so no component on the page owned the class. The result was the toggle reading `dark` from localStorage and showing dark pressed while the page rendered light — indistinguishable, to the person looking at it, from the toggle being broken.
+   - `ThemeApplier` in the root layout is the repair net, re-checking on `visibilitychange` and `pageshow`. It is not a replacement for the script and must not become one: a class set from an effect lands after React has painted, so relying on it alone would flash light on every load.
+   - Anything that reads the stored theme on a later render must resolve it the same way as the script. These three disagreed once already (`localStorage.getItem("theme") ? ... : prefersDark` never consulted the OS for a stored `"system"`) and the symptom looked like a broken toggle rather than three pieces disagreeing.
+6. Native iOS (SwiftUI + Plaid iOS SDK, or React Native) comes later and reuses the same backend. Running your own build on your own phone is free via Xcode, but it needs re-signing about weekly; a $99/yr Apple Developer account removes that.
 
 ---
 

@@ -128,6 +128,62 @@ test("the script is the reason the whole thing works, so it must stay inline", (
   );
 });
 
+test("a client component is mounted to repair a restored document", () => {
+  /*
+   * The other half of this bug, and the reason the script alone was not enough.
+   *
+   * On the home-screen PWA, closing the app and reopening it can restore the saved
+   * document instead of re-fetching it, and the restore can land with `<html>`
+   * missing the `dark` class the inline script had added. Nothing noticed:
+   * `ThemeToggle` renders only while the user menu is open, so no component on the
+   * page owned the class. The symptom was the toggle reading "dark" from
+   * localStorage and showing dark pressed while the page was plainly light - the
+   * same disagreement as the ternary above, reached by a second route.
+   *
+   * Asserted on the mount and the listeners rather than on the behaviour, because
+   * the behaviour needs a document restore to reproduce and that is not something
+   * this suite can arrange. The restore fires `pageshow`, which is why that is one
+   * of the two listeners and not just `visibilitychange`.
+   */
+  const source = readFileSync("src/components/theme-applier.tsx", "utf8");
+  assert.match(source, /export function ThemeApplier\(\)/, "the repair net should be one component");
+  assert.match(source, /useEffect\(/, "and it has to run after hydration");
+  assert.match(
+    source,
+    /addEventListener\("pageshow"/,
+    "a bfcache restore fires no effect, so pageshow has to be handled",
+  );
+  assert.match(
+    source,
+    /visibilitychange/,
+    "visibilitychange is the one Safari delivers reliably",
+  );
+});
+
+test("the repair net is mounted on every page, not inside the menu", () => {
+  /*
+   * The original mistake: leaving this to ThemeToggle would have meant it only ran
+   * when the user menu happened to be open - which is never at page load, and never
+   * on /login. So the component has to be rendered from the root layout.
+   */
+  const layout = readFileSync("src/app/layout.tsx", "utf8");
+  assert.match(layout, /<ThemeApplier \/>/, "layout should mount it unconditionally");
+});
+
+test("the script is still what themes the first paint", () => {
+  /*
+   * Guards against the fix being mistaken for a replacement. Repairing the class
+   * from an effect is strictly worse for a first load: the browser has already
+   * painted light by then, so every page load would flash the wrong theme.
+   */
+  const applier = readFileSync("src/components/theme-applier.tsx", "utf8");
+  assert.match(
+    applier,
+    /safety net rather than the mechanism/,
+    "the repair net should say it is not what themes the first paint",
+  );
+});
+
 test("the CSS keys off the class, not the OS", () => {
   /*
    * Read from the source rather than the built stylesheet so the test does not

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
+import { ThemeApplier } from "@/components/theme-applier";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -73,7 +74,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+      {/*
+        Repair net, not mechanism. The script above is what themes the first
+        paint; this fixes the home-screen PWA case where iOS restores the document
+        without it and no component on the page would otherwise notice. See
+        ThemeApplier for why it cannot live in ThemeToggle.
+      */}
+      <ThemeApplier />
+      {children}
+    </body>
     </html>
   );
 }
